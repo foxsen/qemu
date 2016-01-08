@@ -158,6 +158,7 @@ static inline DATA_TYPE glue(io_read, SUFFIX)(CPUArchState *env,
         cpu_io_recompile(cpu, retaddr);
     }
 
+    //fprintf(stderr, "%s:vaddr=%08lx,%08lx\n", __func__, addr, physaddr);
     cpu->mem_io_vaddr = addr;
     memory_region_dispatch_read(mr, physaddr, &val, 1 << SHIFT,
                                 iotlbentry->attrs);

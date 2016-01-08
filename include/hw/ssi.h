@@ -55,6 +55,9 @@ typedef struct SSISlaveClass {
      * always be called for the device for every txrx access to the parent bus
      */
     uint32_t (*transfer_raw)(SSISlave *dev, uint32_t val);
+
+    /* use external provided storage memory */
+   void (*set_storage)(SSISlave *dev, uint8_t *new_storage);
 } SSISlaveClass;
 
 struct SSISlave {
@@ -83,6 +86,8 @@ DeviceState *ssi_create_slave_no_init(SSIBus *bus, const char *name);
 SSIBus *ssi_create_bus(DeviceState *parent, const char *name);
 
 uint32_t ssi_transfer(SSIBus *bus, uint32_t val);
+
+void ssi_set_storage(SSIBus *bus, uint8_t *new_storage);
 
 /* Automatically connect all children nodes a spi controller as slaves */
 void ssi_auto_connect_slaves(DeviceState *parent, qemu_irq *cs_lines,

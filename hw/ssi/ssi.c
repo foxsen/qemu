@@ -122,6 +122,21 @@ uint32_t ssi_transfer(SSIBus *bus, uint32_t val)
     return r;
 }
 
+/* update slave's internal storage memory */
+void ssi_set_storage(SSIBus *bus, uint8_t *new_storage)
+{
+    BusState *b = BUS(bus);
+    BusChild *kid;
+    SSISlaveClass *ssc;
+
+    QTAILQ_FOREACH(kid, &b->children, sibling) {
+        SSISlave *slave = SSI_SLAVE(kid->child);
+        ssc = SSI_SLAVE_GET_CLASS(slave);
+        if (ssc->set_storage) 
+            return ssc->set_storage(slave, new_storage);
+    }
+}
+
 const VMStateDescription vmstate_ssi_slave = {
     .name = "SSISlave",
     .version_id = 1,
