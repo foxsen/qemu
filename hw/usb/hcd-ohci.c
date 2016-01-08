@@ -1602,6 +1602,7 @@ static uint64_t ohci_mem_read(void *opaque,
 
         case 3: /* HcInterruptStatus */
             retval = ohci->intr_status;
+            ohci->intr_status = 0;
             break;
 
         case 4: /* HcInterruptEnable */
@@ -1692,6 +1693,8 @@ static uint64_t ohci_mem_read(void *opaque,
         }
     }
 
+    //fprintf(stderr, "ohci_mem_read %lx size %d, val=%x\n", addr, size, retval);
+
     return retval;
 }
 
@@ -1701,6 +1704,8 @@ static void ohci_mem_write(void *opaque,
                            unsigned size)
 {
     OHCIState *ohci = opaque;
+
+    //fprintf(stderr, "ohci_mem_write %lx size %d, val=%lx\n", addr, size, val);
 
     /* Only aligned reads are allowed on OHCI */
     if (addr & 3) {

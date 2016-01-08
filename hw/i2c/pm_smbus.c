@@ -44,7 +44,7 @@
 *  ByteDoneStatus = 1 (STS_BYTE_DONE) and INTR = 1 (STS_INTR )
 */
 
-//#define DEBUG
+#define DEBUG
 
 #ifdef DEBUG
 # define SMBUS_DPRINTF(format, ...)     printf(format, ## __VA_ARGS__)

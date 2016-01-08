@@ -721,6 +721,31 @@ static const mips_def_t mips_defs[] =
         .mmu_type = MMU_TYPE_R4000,
     },
     {
+        .name = "Loongson-2H",
+        .CP0_PRid = 0x6303, //to check
+        /* 64KB I-cache and d-cache. 4 way with 32 bit cache line size.  */
+        .CP0_Config0 = (0x1<<17) | (0x1<<16) | (0x1<<11) | (0x1<<8) |
+                       (0x1<<5) | (0x1<<4) | (0x1<<1),
+        /* Note: Config1 is only used internally,
+           Loongson-2H has only Config0.  */
+        .CP0_Config1 = (1 << CP0C1_FP) | (47 << CP0C1_MMU),
+        .CP0_Config3 = MIPS_CONFIG3 | (1U << CP0C3_LPA),
+        .SYNCI_Step = 16,
+        .CCRes = 2,
+        .CP0_Status_rw_bitmask = 0xF5D0FFFF,   
+        .CP1_fcr0 = (0x5 << FCR0_PRID) | (0x1 << FCR0_REV),
+        .CP0_PageGrain = (1 << CP0PG_ELPA),
+        .SEGBITS = 40,
+        /* in fact 2H has only 36bit physical address, but it uses
+           0x9800001000000800 to access locked scache, so we pretend
+           it has 40 bits otherwise get_physical_address won't work
+           .CP0_Config3 & .CP0_PageGrain is set for this purpose
+         */
+        .PABITS = 40,
+        .insn_flags = CPU_MIPS64R2,
+        .mmu_type = MMU_TYPE_R4000,
+    },
+    {
         /* A generic CPU providing MIPS64 ASE DSP 2 features.
            FIXME: Eventually this should be replaced by a real CPU model. */
         .name = "mips64dspr2",

@@ -624,9 +624,14 @@ static int m25p80_init(SSISlave *ss)
 
     /* FIXME use a qdev drive property instead of drive_get_next() */
     dinfo = drive_get_next(IF_MTD);
-
     if (dinfo) {
         DB_PRINT_L(0, "Binding to IF_MTD drive\n");
+    } else {
+        dinfo = drive_get_next(IF_PFLASH);
+        if (dinfo) DB_PRINT_L(0, "Binding to IF_PFLASH drive\n");
+    }
+
+    if (dinfo) {
         s->blk = blk_by_legacy_dinfo(dinfo);
         blk_attach_dev_nofail(s->blk, s);
 
@@ -645,6 +650,15 @@ static int m25p80_init(SSISlave *ss)
     }
 
     return 0;
+}
+
+static void m25p80_set_storage(SSISlave *ss, uint8_t *new_storage)
+{
+    Flash *s = M25P80(ss);
+    memcpy(new_storage, s->storage, s->size);
+    g_free(s->storage);
+    s->storage = new_storage;
+    return;
 }
 
 static void m25p80_pre_save(void *opaque)
@@ -680,6 +694,7 @@ static void m25p80_class_init(ObjectClass *klass, void *data)
     k->transfer = m25p80_transfer8;
     k->set_cs = m25p80_cs;
     k->cs_polarity = SSI_CS_LOW;
+    k->set_storage = m25p80_set_storage;
     dc->vmsd = &vmstate_m25p80;
     mc->pi = data;
 }

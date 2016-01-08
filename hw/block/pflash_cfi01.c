@@ -244,6 +244,8 @@ static uint32_t pflash_data_read(pflash_t *pfl, hwaddr offset,
     uint8_t *p;
     uint32_t ret;
 
+    printf("flash read %lx\n", offset);
+
     p = pfl->storage;
     switch (width) {
     case 1:
