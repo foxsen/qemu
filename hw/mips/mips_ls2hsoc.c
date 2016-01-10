@@ -615,6 +615,7 @@ static void mips_ls2h_init(MachineState *machine)
     int64_t kernel_entry;
     CPUMIPSState *env;
     ISABus *isabus;
+    DeviceState *dev;
 
     /* init CPUs */
     if (cpu_model == NULL) {
@@ -675,7 +676,6 @@ static void mips_ls2h_init(MachineState *machine)
         /* spi rom */
 #if 1
         SSIBus *spi;
-        DeviceState *dev;
         SysBusDevice *busdev;
         qemu_irq cs_line;
 
@@ -829,10 +829,15 @@ static void mips_ls2h_init(MachineState *machine)
 				LS2H_RTC_REG_BASE - LS2H_IO_REG_BASE,
 				&s.rtc_io);
 
-#if 0
+#if 1
     /* ohci */
-    sysbus_create_simple("sysbus-ohci", LS2H_OHCI_REG_BASE - KSEG0_BASE,
-                         NULL);
+    dev = qdev_create(NULL, "sysbus-ohci");
+    qdev_prop_set_uint32(dev, "num-ports", 2);
+    qdev_prop_set_uint64(dev, "dma-offset", 0);
+    qdev_init_nofail(dev);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0,
+            LS2H_OHCI_REG_BASE - KSEG0_BASE);
+    //sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, irq);
 #endif
 
     /* gmac */
