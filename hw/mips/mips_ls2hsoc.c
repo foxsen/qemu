@@ -305,7 +305,6 @@ static void creg_write(void *opaque, hwaddr addr, uint64_t val,
 
 static uint64_t creg_read(void *opaque, hwaddr addr, unsigned size)
 {
-    DPRINTF("creg read addr %lx size %d\n", addr, size);
     uint64_t val = -1LL;
 
     addr += LS2H_CHIP_CFG_REG_BASE;
@@ -314,6 +313,7 @@ static uint64_t creg_read(void *opaque, hwaddr addr, unsigned size)
             val = 0xf00LL;
             break;
     }
+    DPRINTF("creg read addr %lx size %d val %lx\n", addr, size, val);
     return val;
 }
 
@@ -351,12 +351,13 @@ static void i2c0_write(void *opaque, hwaddr addr, uint64_t val,
             s->i2c0_offset = 0;
             s->i2c0_data = 0;
         } else {
-            fprintf(stderr, "invalid i2c cr value %lx ignored\n", val);
+            fprintf(stderr, "invalid i2c0 cmd %lx at %lx ignored\n", val,
+                    s->cpu->env.active_tc.PC);
         }
     }else if (addr == LS2H_I2C0_TXR_REG - LS2H_I2C0_REG_BASE) {
         s->i2c0_data = val;
     }else if (addr > 5) {
-        fprintf(stderr, "i2c write invalid\n");
+        fprintf(stderr, "i2c0 write invalid\n");
     }
 }
 
@@ -369,7 +370,7 @@ static uint64_t i2c0_read(void *opaque, hwaddr addr, unsigned size)
     } else if (addr == LS2H_I2C0_RXR_REG - LS2H_I2C0_REG_BASE) {
         val = s->i2c0_data;
     } 
-    DPRINTF("i2c read addr %lx size %d val=%lx\n", addr, size, val);
+    DPRINTF("i2c0 read addr %lx size %d val=%lx\n", addr, size, val);
     return val;
 }
 
@@ -383,7 +384,9 @@ static const MemoryRegionOps i2c0_io_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
-static unsigned char eeprom_gmac[8192];
+/* mac0/mac1 */
+static unsigned char eeprom_gmac[8192] = { 0x00, 0x23, 0x9e, 0x00, 0x01, 0x02,
+    0x00, 0x23, 0x9e, 0x00, 0x01, 0x03};
 enum i2c_state { I2C_START_R, I2C_START_W, I2C_WRITE1, I2C_WRITE2, 
     I2C_WRITEN, I2C_STOP }  state;
 
@@ -408,7 +411,7 @@ static void i2c1_write(void *opaque, hwaddr addr, uint64_t val,
                 eeprom_gmac[s->i2c1_offset & 0x1fff] = s->i2c1_data;
                 s->i2c1_offset ++;
             } else {
-                fprintf(stderr, "Invalid CR_WRITE seen at %lx\n",
+                fprintf(stderr, "Invalid i2c1 CR_WRITE seen at %lx\n",
                         s->cpu->env.active_tc.PC);
             }
         } else if (val & CR_READ) {
@@ -428,12 +431,12 @@ static void i2c1_write(void *opaque, hwaddr addr, uint64_t val,
             s->i2c1_data = 0;
             state = I2C_STOP;
         } else {
-            fprintf(stderr, "invalid i2c cmd value\n");
+            fprintf(stderr, "invalid i2c1 cmd value\n");
         }
     }else if (addr == LS2H_I2C1_TXR_REG - LS2H_I2C1_REG_BASE) {
         s->i2c1_data = val;
     }else if (addr > 5) {
-        fprintf(stderr, "i2c write invalid\n");
+        fprintf(stderr, "i2c1 write invalid\n");
     }
 }
 
@@ -726,7 +729,9 @@ static void mips_ls2h_init(MachineState *machine)
 
     /* Interrupt controller */
     /* must end with a NULL */
-    s.intc_dev = sysbus_create_varargs("ls2h-intc", LS2H_INT_REG_BASE - 
+    //s.intc_dev = sysbus_create_varargs("ls2h-intc", LS2H_INT_REG_BASE - 
+    /* we take care of msr too */
+    s.intc_dev = sysbus_create_varargs("ls2h-intc", LS2H_MSI_PORT_REG - 
             KSEG0_BASE, env->irq[2], env->irq[3], env->irq[4], 
             env->irq[5], env->irq[6], NULL);
     /* set higher priority then general chip reg io */
