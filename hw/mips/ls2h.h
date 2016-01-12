@@ -11,6 +11,7 @@
 /* CHIP CONFIG regs */
 #define LS2H_CHIP_CFG_REG_BASE				(LS2H_IO_REG_BASE + 0x00d00000)
 #define LS2H_MSI_PORT_REG				(LS2H_CHIP_CFG_REG_BASE + 0x0)
+#define LS2H_INTC_SIZE                  0xc0
 
 #define LS2H_INT_REG_BASE				(LS2H_CHIP_CFG_REG_BASE + 0x0040)
 
@@ -300,6 +301,9 @@ typedef struct LS2hState {
 
     MemoryRegion lpc_mem;
     qemu_irq isa_irqs[16];
+
+    DeviceState *spidev;
+    DeviceState *intc_dev;
 
 } LS2hState;
 

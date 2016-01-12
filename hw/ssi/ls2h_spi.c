@@ -56,9 +56,11 @@ typedef struct Ls2hSPI {
 
     MemoryRegion mmio[2];
 
+    /* irq to system */
     qemu_irq irq;
     int irqline;
 
+    /* chip select to slave */
     uint8_t num_cs;
     qemu_irq *cs_lines;
 
