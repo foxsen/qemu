@@ -58,8 +58,6 @@ static inline GCC_FMT_ATTR(1, 2) int DPRINTF(const char *fmt, ...)
 #define ENVP_NB_ENTRIES	 	16
 #define ENVP_ENTRY_SIZE	 	256
 
-#define MAX_IDE_BUS 2
-
 #define LS2H_BIOSNAME "pmon_ls2h.bin"
 
 static struct _loaderparams {
@@ -616,6 +614,8 @@ static void mips_ls2h_init(MachineState *machine)
     CPUMIPSState *env;
     ISABus *isabus;
     DeviceState *dev;
+    MemoryRegion *mr;
+    qemu_irq irq;
 
     /* init CPUs */
     if (cpu_model == NULL) {
@@ -677,23 +677,22 @@ static void mips_ls2h_init(MachineState *machine)
 #if 1
         SSIBus *spi;
         SysBusDevice *busdev;
-        qemu_irq cs_line;
 
-        dev = qdev_create(NULL, "ls2h-spi");
-        qdev_init_nofail(dev);
-        busdev = SYS_BUS_DEVICE(dev);
+        s.spidev = qdev_create(NULL, "ls2h-spi");
+        qdev_init_nofail(s.spidev);
+        busdev = SYS_BUS_DEVICE(s.spidev);
         sysbus_mmio_map(busdev, 0, LS2H_SPI_REG_BASE - KSEG0_BASE);
         sysbus_mmio_map(busdev, 1, 0xbfc00000 - KSEG0_BASE);
+        /* delay it till interrupt controller inited */
         //sysbus_connect_irq(busdev, 0, irq[SPI_IRQ]);
 
-        spi = (SSIBus *)qdev_get_child_bus(dev, "spi");
+        spi = (SSIBus *)qdev_get_child_bus(s.spidev, "spi");
 
         dev = ssi_create_slave(spi, "sst25vf080b");
+        irq = qdev_get_gpio_in_named(dev, SSI_GPIO_CS, 0);
+        sysbus_connect_irq(busdev, 1, irq);
 
-        cs_line = qdev_get_gpio_in_named(dev, SSI_GPIO_CS, 0);
-        sysbus_connect_irq(busdev, 1, cs_line);
-
-        /* tell salve to use our rom memory as internal storage */
+        /* tell slave to use our rom memory as internal storage */
         ssi_set_storage(spi, 
                 memory_region_get_ram_ptr(busdev->mmio[1].memory));
 #else
@@ -726,6 +725,18 @@ static void mips_ls2h_init(MachineState *machine)
     cpu_mips_clock_init(env);
 
     /* Interrupt controller */
+    /* must end with a NULL */
+    s.intc_dev = sysbus_create_varargs("ls2h-intc", LS2H_INT_REG_BASE - 
+            KSEG0_BASE, env->irq[2], env->irq[3], env->irq[4], 
+            env->irq[5], env->irq[6], NULL);
+    /* set higher priority then general chip reg io */
+    mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(s.intc_dev), 0);
+    mr->may_overlap = true;
+    mr->priority = 1;
+
+    /* set ssi irq */
+    irq = qdev_get_gpio_in(s.intc_dev, 6);
+    sysbus_connect_irq(SYS_BUS_DEVICE(s.spidev), 0, irq);
 
     /* init other devices */
     //DMA_init(0);
@@ -743,10 +754,10 @@ static void mips_ls2h_init(MachineState *machine)
                                 LS2H_UART0_REG_BASE - KSEG0_BASE, 
                                 &s.uart0_mem);
 
-    /* A single 16450 sits at offset 0x1fe8000. It is attached to
-       MIPS CPU INT2, which is interrupt 4. */
+    /* A single 16450 sits at offset 0x1fe8000. */ 
     if (serial_hds[0]) {
-        serial_init(LS2H_UART0_REG_BASE - LS2H_IO_REG_BASE, env->irq[4], 
+        irq = qdev_get_gpio_in(s.intc_dev, 2);
+        serial_init(LS2H_UART0_REG_BASE - LS2H_IO_REG_BASE, irq, 
                     115200, serial_hds[0], get_system_io());
     }
 
@@ -760,14 +771,12 @@ static void mips_ls2h_init(MachineState *machine)
                                 &s.creg_mem);
     memory_region_init_io(&s.creg_io, NULL, &creg_io_ops, (void*)env, 
                           "chip config io", 0x100000);
-    memory_region_add_subregion(get_system_io(), 
-				LS2H_CHIP_CFG_REG_BASE - LS2H_IO_REG_BASE,
-				&s.creg_io);
+    memory_region_add_subregion_overlap(get_system_io(), 
+				LS2H_CHIP_CFG_REG_BASE - LS2H_IO_REG_BASE, &s.creg_io, 0);
 
     /* SATA IO */
-    sysbus_create_simple("sysbus-ahci", LS2H_SATA_REG_BASE - KSEG0_BASE,
-                         env->irq[3]);
-
+    irq = qdev_get_gpio_in(s.intc_dev, 37);
+    sysbus_create_simple("sysbus-ahci", LS2H_SATA_REG_BASE - KSEG0_BASE, irq);
 
     /* I2C0 IO */
     memory_region_init_alias(&s.i2c0_mem, NULL, "I2C0 I/O mem",
@@ -837,16 +846,20 @@ static void mips_ls2h_init(MachineState *machine)
     qdev_init_nofail(dev);
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0,
             LS2H_OHCI_REG_BASE - KSEG0_BASE);
-    //sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, irq);
+    irq = qdev_get_gpio_in(s.intc_dev, 33);
+    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, irq);
 #endif
 
     /* gmac */
-    sysbus_create_simple("xgmac", LS2H_GMAC0_REG_BASE - KSEG0_BASE, NULL);
+    irq = qdev_get_gpio_in(s.intc_dev, 35);
+    sysbus_create_simple("xgmac", LS2H_GMAC0_REG_BASE - KSEG0_BASE, irq);
 
-    sysbus_create_simple("xgmac", LS2H_GMAC1_REG_BASE - KSEG0_BASE, NULL);
+    irq = qdev_get_gpio_in(s.intc_dev, 36);
+    sysbus_create_simple("xgmac", LS2H_GMAC1_REG_BASE - KSEG0_BASE, irq);
 
     /* display controller */
-    sysbus_create_simple("ls2h-dc", LS2H_DC_REG_BASE - KSEG0_BASE, NULL);
+    irq = qdev_get_gpio_in(s.intc_dev, 39);
+    sysbus_create_simple("ls2h-dc", LS2H_DC_REG_BASE - KSEG0_BASE, irq);
 
     /* keyboard/mouse */
     memory_region_init_alias(&s.lpc_mem, NULL, "LPC I/O mem",
