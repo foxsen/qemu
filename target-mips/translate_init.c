@@ -722,13 +722,16 @@ static const mips_def_t mips_defs[] =
     },
     {
         .name = "Loongson-2H",
-        .CP0_PRid = 0x6303, //to check
+        .CP0_PRid = 0x6305, 
         /* 64KB I-cache and d-cache. 4 way with 32 bit cache line size.  */
-        .CP0_Config0 = (0x1<<17) | (0x1<<16) | (0x1<<11) | (0x1<<8) |
-                       (0x1<<5) | (0x1<<4) | (0x1<<1),
-        /* Note: Config1 is only used internally,
-           Loongson-2H has only Config0.  */
-        .CP0_Config1 = (1 << CP0C1_FP) | (47 << CP0C1_MMU),
+        .CP0_Config0 = MIPS_CONFIG0 | (0x1 << CP0C0_AR) | (0x2 << CP0C0_AT) |
+                       (MMU_TYPE_R4000 << CP0C0_MT),
+        .CP0_Config1 = MIPS_CONFIG1 | (1 << CP0C1_FP) | (63 << CP0C1_MMU) |
+                       (2 << CP0C1_IS) | (5 << CP0C1_IL) | (3 << CP0C1_IA) |
+                       (2 << CP0C1_DS) | (5 << CP0C1_DL) | (3 << CP0C1_DA) |
+                       (1 << CP0C1_PC) | (1 << CP0C1_WR) | (1 << CP0C1_EP),
+        .CP0_Config2 = MIPS_CONFIG2 | (5 << CP0C2_SS) | ( 5 << CP0C2_SL) |
+                       (3 << CP0C2_SA),
         .CP0_Config3 = MIPS_CONFIG3 | (1U << CP0C3_LPA),
         .SYNCI_Step = 16,
         .CCRes = 2,
