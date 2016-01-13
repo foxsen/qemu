@@ -276,9 +276,16 @@ typedef struct LS2hState {
     MemoryRegion scache0_ram;
 
     MemoryRegion ram;
+    MemoryRegion ram_hi;
     MemoryRegion bios;
     MemoryRegion uart0_mem;
     MemoryRegion uart0_io;
+    MemoryRegion uart1_mem;
+    MemoryRegion uart1_io;
+    MemoryRegion uart2_mem;
+    MemoryRegion uart2_io;
+    MemoryRegion uart3_mem;
+    MemoryRegion uart3_io;
     MemoryRegion creg_mem;
     MemoryRegion creg_io;
     MemoryRegion i2c0_mem;
