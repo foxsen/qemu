@@ -469,6 +469,19 @@ static void acpi_write(void *opaque, hwaddr addr, uint64_t val,
                                 unsigned int size)
 {
     DPRINTF("acpi write addr %lx with val %lx size %d\n", addr, val, size);
+    addr += LS2H_ACPI_REG_BASE;
+    switch (addr) {
+        case LS2H_PM1_STS_REG:
+            break;
+        case LS2H_PM1_CNT_REG:
+            if (val == 0x3c00)
+                qemu_system_shutdown_request();
+            break;
+        case LS2H_RST_CNT_REG:
+            if (val & 1)
+                qemu_system_reset_request();
+            break;
+    }
 }
 
 static uint64_t acpi_read(void *opaque, hwaddr addr, unsigned size)
