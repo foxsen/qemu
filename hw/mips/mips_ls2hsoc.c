@@ -659,6 +659,12 @@ static void mips_ls2h_init(MachineState *machine)
             s.ram_size);
     memory_region_add_subregion(get_system_memory(), 0, &s.ram);
 
+    /* memory above 256M mapped to 0x110000000 */
+    memory_region_init_alias(&s.ram_hi, NULL, "ls2h.ram_hi", 
+            &s.ram, 0x10000000, s.ram_size - 256);
+    memory_region_add_subregion(get_system_memory(), 0x110000000, 
+            &s.ram_hi);
+
     memory_region_init_io(&s.mc_io, NULL, &mc_io_ops, &s, 
                           "memory controller I/O", 0x1000);
     /* this doesn't belongs to system_io */
@@ -763,7 +769,7 @@ static void mips_ls2h_init(MachineState *machine)
       [0x1f000000,0x1fffffff] */
     memory_region_set_size(get_system_io(), 0x1000000);
 
-    /* Register of SERIAL IO space at 0x1fe80000. */
+    /* SERIAL IO */
     memory_region_init_alias(&s.uart0_mem, NULL, "uart0_mmio",
                              get_system_io(),
                              LS2H_UART0_REG_BASE - LS2H_IO_REG_BASE,
@@ -771,12 +777,52 @@ static void mips_ls2h_init(MachineState *machine)
     memory_region_add_subregion(get_system_memory(), 
                                 LS2H_UART0_REG_BASE - KSEG0_BASE, 
                                 &s.uart0_mem);
-
-    /* A single 16450 sits at offset 0x1fe8000. */ 
     if (serial_hds[0]) {
         irq = qdev_get_gpio_in(s.intc_dev, 2);
         serial_init(LS2H_UART0_REG_BASE - LS2H_IO_REG_BASE, irq, 
                     115200, serial_hds[0], get_system_io());
+    }
+
+    /* uart1 */
+    memory_region_init_alias(&s.uart1_mem, NULL, "uart1_mmio",
+                             get_system_io(),
+                             LS2H_UART1_REG_BASE - LS2H_IO_REG_BASE,
+                             0x00001000);
+    memory_region_add_subregion(get_system_memory(), 
+                                LS2H_UART1_REG_BASE - KSEG0_BASE, 
+                                &s.uart1_mem);
+    if (serial_hds[1]) {
+        irq = qdev_get_gpio_in(s.intc_dev, 3);
+        serial_init(LS2H_UART1_REG_BASE - LS2H_IO_REG_BASE, irq, 
+                    115200, serial_hds[1], get_system_io());
+    }
+
+    /* uart2 */
+    memory_region_init_alias(&s.uart2_mem, NULL, "uart2_mmio",
+                             get_system_io(),
+                             LS2H_UART2_REG_BASE - LS2H_IO_REG_BASE,
+                             0x00001000);
+    memory_region_add_subregion(get_system_memory(), 
+                                LS2H_UART2_REG_BASE - KSEG0_BASE, 
+                                &s.uart2_mem);
+    if (serial_hds[2]) {
+        irq = qdev_get_gpio_in(s.intc_dev, 4);
+        serial_init(LS2H_UART2_REG_BASE - LS2H_IO_REG_BASE, irq, 
+                    115200, serial_hds[2], get_system_io());
+    }
+
+    /* uart3 */
+    memory_region_init_alias(&s.uart3_mem, NULL, "uart3_mmio",
+                             get_system_io(),
+                             LS2H_UART3_REG_BASE - LS2H_IO_REG_BASE,
+                             0x00001000);
+    memory_region_add_subregion(get_system_memory(), 
+                                LS2H_UART3_REG_BASE - KSEG0_BASE, 
+                                &s.uart3_mem);
+    if (serial_hds[3]) {
+        irq = qdev_get_gpio_in(s.intc_dev, 5);
+        serial_init(LS2H_UART3_REG_BASE - LS2H_IO_REG_BASE, irq, 
+                    115200, serial_hds[3], get_system_io());
     }
 
     /* Chip config IO */
