@@ -253,6 +253,10 @@ static uint64_t mc_read(void *opaque, hwaddr addr, unsigned size)
 static const MemoryRegionOps mc_io_ops = {
     .read = mc_read,
     .write = mc_write,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+    },
     .impl = {
         .min_access_size = 1,
         .max_access_size = 8,
@@ -747,9 +751,8 @@ static void mips_ls2h_init(MachineState *machine)
     cpu_mips_clock_init(env);
 
     /* Interrupt controller */
-    /* must end with a NULL */
-    //s.intc_dev = sysbus_create_varargs("ls2h-intc", LS2H_INT_REG_BASE - 
-    /* we take care of msr too */
+    /* must end with a NULL; we take care of msr too 
+     */
     s.intc_dev = sysbus_create_varargs("ls2h-intc", LS2H_MSI_PORT_REG - 
             KSEG0_BASE, env->irq[2], env->irq[3], env->irq[4], 
             env->irq[5], env->irq[6], NULL);
@@ -833,7 +836,7 @@ static void mips_ls2h_init(MachineState *machine)
     memory_region_add_subregion(get_system_memory(), 
                                 LS2H_CHIP_CFG_REG_BASE - KSEG0_BASE, 
                                 &s.creg_mem);
-    memory_region_init_io(&s.creg_io, NULL, &creg_io_ops, (void*)env, 
+    memory_region_init_io(&s.creg_io, NULL, &creg_io_ops, (void*)&s, 
                           "chip config io", 0x100000);
     memory_region_add_subregion_overlap(get_system_io(), 
 				LS2H_CHIP_CFG_REG_BASE - LS2H_IO_REG_BASE, &s.creg_io, 0);
