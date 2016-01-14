@@ -324,6 +324,10 @@ static uint64_t creg_read(void *opaque, hwaddr addr, unsigned size)
 static const MemoryRegionOps creg_io_ops = {
     .read = creg_read,
     .write = creg_write,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+    },
     .impl = {
         .min_access_size = 1,
         .max_access_size = 8,
