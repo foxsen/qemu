@@ -95,6 +95,8 @@ static void ls2h_set_intr(void *opaque, int irq, int req)
 
     req = (bank->intpol & mask) ? req : !req;
 
+    //fprintf(stderr, "irq %d set to %d\n", irq, req);
+
     if (bank->intedge & mask) {
         /* edge triggered */
         if (req) {
@@ -189,6 +191,8 @@ static void ls2h_inth_write(void *opaque, hwaddr addr,
             bank->intedge = value;
             break;
     }
+
+    ls2h_inth_update(s);
 }
 
 static const MemoryRegionOps ls2h_inth_mem_ops = {
