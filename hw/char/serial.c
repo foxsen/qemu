@@ -909,7 +909,6 @@ static uint64_t serial_mm_read(void *opaque, hwaddr addr,
                                unsigned size)
 {
     SerialState *s = opaque;
-    fprintf(stderr, "read %lx\n", addr);
     return serial_ioport_read(s, addr >> s->it_shift, 1);
 }
 
@@ -918,7 +917,6 @@ static void serial_mm_write(void *opaque, hwaddr addr,
 {
     SerialState *s = opaque;
     value &= ~0u >> (32 - (size * 8));
-    fprintf(stderr, "write %lx\n", addr);
     serial_ioport_write(s, addr >> s->it_shift, value, 1);
 }
 
