@@ -22,6 +22,7 @@
 #include "hw/devices.h"
 #include "hw/isa/isa.h"
 #include "hw/ssi.h"
+#include "hw/i2c/i2c.h"
 #include "sysemu/block-backend.h"
 #include "hw/block/flash.h"
 #include "hw/mips/mips.h"
@@ -195,29 +196,6 @@ static void main_cpu_reset(void *opaque)
     }
 }
 
-/* byte 3 == 0x2, udimm
-   byte 4 == 0x2, 1Gb chip, 8 banks 
-   byte 5 == 0x11, row 14bit, col 10bit
-   byte 6 == 0x6, 1.2/1.35/1.5v ok
-   byte 7 == 0x1, 8bit device width, 1rank
-   byte 8 == 0x3, bus width 64
-   Total capacity = sdram capicity / 8 * buswidth / device width * ranks 
-                  = 1Gb / 8 * 64 / 8 * 1 = 1GB
-        or (row + col)  + 3 (8 banks) + 3 ( 64/8 width) + 0(1rank) = 2^30
-*/
-static const uint8_t eeprom_spd[0x80] = {
-    0x00,0x11,0x0b,0x02,0x02,0x11,0x06,0x01,0x03,0x70,
-    0x70,0x00,0x82,0x10,0x00,0x01,0x0e,0x04,0x0c,0x01,
-    0x02,0x20,0x80,0x75,0x70,0x00,0x00,0x50,0x3c,0x50,
-    0x2d,0x20,0xb0,0xb0,0x50,0x50,0x00,0x00,0x00,0x00,
-    0x00,0x41,0x48,0x3c,0x32,0x75,0x00,0x00,0x00,0x00,
-    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-    0x00,0x00,0x00,0x9c,0x7b,0x07,0x00,0x00,0x00,0x00,
-    0x00,0x00,0x00,0x00,0x48,0x42,0x35,0x34,0x41,0x32,
-    0x35,0x36,0x38,0x4b,0x4e,0x2d,0x41,0x37,0x35,0x42,
-    0x20,0x30,0x20
-};
 
 static LS2hState s;
 
@@ -336,141 +314,218 @@ static const MemoryRegionOps creg_io_ops = {
 };
 
 
-/* a minimal implentation just to keep current pmon going */
-static void i2c0_write(void *opaque, hwaddr addr, uint64_t val,
-                                unsigned size)
+/** I2C slave implementations **/
+typedef enum i2c_state { I2C_STOP, I2C_SEND, I2C_RECV } i2c_state_t;
+
+/* I2C slave implementation of memory SPD eeprom */
+#define TYPE_LS2H_SPD "ls2h-spd"
+#define LS2H_SPD(obj) OBJECT_CHECK(Ls2hSPDState, (obj), TYPE_LS2H_SPD)
+
+/* byte 3 == 0x2, udimm
+   byte 4 == 0x2, 1Gb chip, 8 banks 
+   byte 5 == 0x11, row 14bit, col 10bit
+   byte 6 == 0x6, 1.2/1.35/1.5v ok
+   byte 7 == 0x1, 8bit device width, 1rank
+   byte 8 == 0x3, bus width 64
+   Total capacity = sdram capicity / 8 * buswidth / device width * 
+   ranks = 1Gb / 8 * 64 / 8 * 1 = 1GB
+   or (row + col)  + 3 (8 banks) + 3 ( 64/8 width) + 0(1rank) = 2^30
+
+   Only the first row is correctly set for now
+ */
+static const uint8_t eeprom_spd[0x80] = {
+    0x00,0x11,0x0b,0x02,0x02,0x11,0x06,0x01,0x03,0x70,
+    0x70,0x00,0x82,0x10,0x00,0x01,0x0e,0x04,0x0c,0x01,
+    0x02,0x20,0x80,0x75,0x70,0x00,0x00,0x50,0x3c,0x50,
+    0x2d,0x20,0xb0,0xb0,0x50,0x50,0x00,0x00,0x00,0x00,
+    0x00,0x41,0x48,0x3c,0x32,0x75,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x9c,0x7b,0x07,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x48,0x42,0x35,0x34,0x41,0x32,
+    0x35,0x36,0x38,0x4b,0x4e,0x2d,0x41,0x37,0x35,0x42,
+    0x20,0x30,0x20
+};
+
+typedef struct {
+    I2CSlave parent_obj;
+
+    i2c_state_t state;
+    uint8_t offset;
+
+    const uint8_t *eeprom;
+} Ls2hSPDState;
+
+static int ls2h_spd_send(I2CSlave *i2c, uint8_t data)
 {
-    LS2hState *s = (LS2hState *)opaque;
-    DPRINTF("i2c0 write addr %lx with val %lx size %d\n", addr, val, size);
-    if (addr == LS2H_I2C0_CR_REG - LS2H_I2C0_REG_BASE) {
-        s->i2c0_status = val;
-        if (val == (CR_START | CR_WRITE)) {
-            s->i2c0_addr = s->i2c0_data;
-        } else if (val == CR_WRITE) {
-            s->i2c0_offset = s->i2c0_data;
-        } else if (val == (CR_READ | CR_ACK)) {
-            if ((s->i2c0_addr & 0xfe) == 0xa8) 
-                s->i2c0_data = eeprom_spd[s->i2c0_offset & 0x7f];
-            else
-                s->i2c0_data = 0; //no dimm1 
-            DPRINTF("read at offset %lx\n", s->i2c0_offset);
-        } else if (val == CR_STOP) {
-            s->i2c0_status = 0;
-            s->i2c0_offset = 0;
-            s->i2c0_data = 0;
-        } else {
-            fprintf(stderr, "invalid i2c0 cmd %lx at %lx ignored\n", val,
-                    s->cpu->env.active_tc.PC);
-        }
-    }else if (addr == LS2H_I2C0_TXR_REG - LS2H_I2C0_REG_BASE) {
-        s->i2c0_data = val;
-    }else if (addr > 5) {
-        fprintf(stderr, "i2c0 write invalid\n");
+    Ls2hSPDState *s = LS2H_SPD(i2c);
+    if (s->state == I2C_SEND) 
+        s->offset = data;
+    else
+        fprintf(stderr, "data sent in wrong state %d\n", s->state);
+    return 0;
+}
+
+static void ls2h_spd_event(I2CSlave *i2c, enum i2c_event event)
+{
+    Ls2hSPDState *s = LS2H_SPD(i2c);
+    switch (event) {
+        case I2C_START_SEND:
+            s->state = I2C_SEND;
+            break;
+        case I2C_START_RECV:
+            s->state = I2C_RECV;
+            break;
+        case I2C_FINISH:
+            s->state = I2C_STOP;
+            s->offset = 0;
+            break;
+        case I2C_NACK:
+            break;
     }
 }
 
-static uint64_t i2c0_read(void *opaque, hwaddr addr, unsigned size)
+static int ls2h_spd_recv(I2CSlave *i2c)
 {
-    LS2hState *s = (LS2hState *)opaque;
-    uint64_t val = -1;
-    if (addr == LS2H_I2C0_SR_REG - LS2H_I2C0_REG_BASE) {
-        val = 0; // ~SR_TIP, always ready
-    } else if (addr == LS2H_I2C0_RXR_REG - LS2H_I2C0_REG_BASE) {
-        val = s->i2c0_data;
-    } 
-    DPRINTF("i2c0 read addr %lx size %d val=%lx\n", addr, size, val);
-    return val;
+    int ret;
+    Ls2hSPDState *s = LS2H_SPD(i2c);
+
+    if (s->state != I2C_RECV) {
+        fprintf(stderr, "i2c receive in wrong state %d\n", s->state);
+        ret = -1;
+    } else 
+        ret = s->eeprom[s->offset & 0x7f];
+    DPRINTF("spd recv %d at %d\n", ret, s->offset);
+    return ret;
 }
 
-static const MemoryRegionOps i2c0_io_ops = {
-    .read = i2c0_read,
-    .write = i2c0_write,
-    .impl = {
-        .min_access_size = 1,
-        .max_access_size = 1,
-    },
-    .endianness = DEVICE_LITTLE_ENDIAN,
+static int ls2h_spd_init(I2CSlave *i2c)
+{
+    Ls2hSPDState *s = LS2H_SPD(i2c);
+
+    s->offset = 0;
+    s->state = I2C_STOP;
+    s->eeprom = eeprom_spd;
+    return 0;
+}
+
+static void ls2h_spd_class_init(ObjectClass *klass, void *data)
+{
+    I2CSlaveClass *k = I2C_SLAVE_CLASS(klass);
+
+    k->init = ls2h_spd_init;
+    k->event = ls2h_spd_event;
+    k->recv = ls2h_spd_recv;
+    k->send = ls2h_spd_send;
+}
+
+static const TypeInfo ls2h_spd_info = {
+    .name          = TYPE_LS2H_SPD,
+    .parent        = TYPE_I2C_SLAVE,
+    .instance_size = sizeof(Ls2hSPDState),
+    .class_init    = ls2h_spd_class_init,
 };
 
-/* mac0/mac1 */
-static unsigned char eeprom_gmac[8192] = { 0x00, 0x23, 0x9e, 0x00, 0x01, 0x02,
-    0x00, 0x23, 0x9e, 0x00, 0x01, 0x03};
-enum i2c_state { I2C_START_R, I2C_START_W, I2C_WRITE1, I2C_WRITE2, 
-    I2C_WRITEN, I2C_STOP }  state;
+/* I2C slave implementation for gmac eeprom */
+#define TYPE_LS2H_MACROM "ls2h-macrom"
+#define LS2H_MACROM(obj) OBJECT_CHECK(Ls2hMacromState, (obj),TYPE_LS2H_MACROM)
 
-static void i2c1_write(void *opaque, hwaddr addr, uint64_t val,
-                                unsigned size)
+/* mac0/mac1 eeprom, only the first 12 bytes emulated */
+static const unsigned char eeprom_mac[] = 
+{ 0x00, 0x23, 0x9e, 0x00, 0x01, 0x02, 0x00, 0x23, 0x9e, 0x00, 0x01, 0x03 };
+
+typedef struct {
+    I2CSlave parent_obj;
+
+    i2c_state_t state;
+    uint8_t offset;
+    int len;
+
+    const uint8_t *eeprom;
+} Ls2hMacromState;
+
+static int ls2h_macrom_send(I2CSlave *i2c, uint8_t data)
 {
-    LS2hState *s = (LS2hState *)opaque;
-    DPRINTF("i2c1 write addr %lx with val %lx size %d\n", addr, val, size);
-    if (addr == LS2H_I2C1_CR_REG - LS2H_I2C1_REG_BASE) {
-        s->i2c1_status = val;
-        if (val == (CR_START | CR_WRITE)) {
-            s->i2c1_addr = s->i2c1_data;
-            state = (s->i2c1_addr == 0xa0) ? I2C_START_W : I2C_START_R;
-        } else if (val == CR_WRITE) {
-            if (state == I2C_START_W) {
-                state = I2C_WRITE1;
-                s->i2c1_offset = s->i2c1_data << 8;
-            } else if (state == I2C_WRITE1) {
-                state = I2C_WRITE2;
-                s->i2c1_offset |= s->i2c1_data;
-            } else if (state == I2C_WRITE2) {
-                eeprom_gmac[s->i2c1_offset & 0x1fff] = s->i2c1_data;
-                s->i2c1_offset ++;
-            } else {
-                fprintf(stderr, "Invalid i2c1 CR_WRITE seen at %lx\n",
-                        s->cpu->env.active_tc.PC);
-            }
-        } else if (val & CR_READ) {
-            if (state == I2C_START_R) {
-                s->i2c1_data = eeprom_gmac[s->i2c1_offset & 0x1fff];
-                s->i2c1_offset ++;
-            } else {
-                s->i2c1_data = 0; 
-                fprintf(stderr, "Invalid CR_READ seen at %lx\n",
-                        s->cpu->env.active_tc.PC);
-            }
-            DPRINTF("read at offset %lx\n", s->i2c1_offset);
-        } else if (val == CR_STOP) {
-            s->i2c1_addr = 0;
-            s->i2c1_status = 0;
-            s->i2c1_offset = 0;
-            s->i2c1_data = 0;
-            state = I2C_STOP;
+    Ls2hMacromState *s = LS2H_MACROM(i2c);
+    if (s->state == I2C_SEND) { 
+        if (s->len == 0) {
+            s->offset = data << 8;
+            s->len = 1;
+        } else if (s->len == 1) {
+            s->offset |= data;
+            s->len = 2;
         } else {
-            fprintf(stderr, "invalid i2c1 cmd value\n");
+          fprintf(stderr, "addr sent with wrong len %d\n", s->len);
         }
-    }else if (addr == LS2H_I2C1_TXR_REG - LS2H_I2C1_REG_BASE) {
-        s->i2c1_data = val;
-    }else if (addr > 5) {
-        fprintf(stderr, "i2c1 write invalid\n");
+    } else {
+        fprintf(stderr, "data sent in wrong state %d\n", s->state);
+    }
+    return 0;
+}
+
+static void ls2h_macrom_event(I2CSlave *i2c, enum i2c_event event)
+{
+    Ls2hMacromState *s = LS2H_MACROM(i2c);
+    switch (event) {
+        case I2C_START_SEND:
+            s->state = I2C_SEND;
+            break;
+        case I2C_START_RECV:
+            s->state = I2C_RECV;
+            break;
+        case I2C_FINISH:
+            s->state = I2C_STOP;
+            s->len = 0;
+            s->offset = 0;
+            break;
+        case I2C_NACK:
+            break;
     }
 }
 
-static uint64_t i2c1_read(void *opaque, hwaddr addr, unsigned size)
+static int ls2h_macrom_recv(I2CSlave *i2c)
 {
-    LS2hState *s = (LS2hState *)opaque;
-    uint64_t val = -1;
-    if (addr == LS2H_I2C1_SR_REG - LS2H_I2C1_REG_BASE) {
-        val = 0; // ~SR_TIP, always ready
-    } else if (addr == LS2H_I2C1_RXR_REG - LS2H_I2C1_REG_BASE) {
-        val = s->i2c1_data;
-    } 
-    DPRINTF("i2c1 read addr %lx size %d val=%lx\n", addr, size, val);
-    return val;
+    int ret;
+    Ls2hMacromState *s = LS2H_MACROM(i2c);
+
+    if (s->state != I2C_RECV) {
+        fprintf(stderr, "i2c receive in wrong state %d\n", s->state);
+        ret = -1;
+    } else {
+        ret = (s->offset > 11) ? 0 : s->eeprom[s->offset];
+    }
+    DPRINTF("macrom recv %d at %d\n", ret, s->offset);
+    return ret;
 }
 
-static const MemoryRegionOps i2c1_io_ops = {
-    .read = i2c1_read,
-    .write = i2c1_write,
-    .impl = {
-        .min_access_size = 1,
-        .max_access_size = 1,
-    },
-    .endianness = DEVICE_LITTLE_ENDIAN,
-};
+static int ls2h_macrom_init(I2CSlave *i2c)
+{
+    Ls2hMacromState *s = LS2H_MACROM(i2c);
 
+    s->offset = 0;
+    s->state = I2C_STOP;
+    s->len = 0;
+    s->eeprom = eeprom_mac;
+
+    return 0;
+}
+
+static void ls2h_macrom_class_init(ObjectClass *klass, void *data)
+{
+    I2CSlaveClass *k = I2C_SLAVE_CLASS(klass);
+
+    k->init = ls2h_macrom_init;
+    k->event = ls2h_macrom_event;
+    k->recv = ls2h_macrom_recv;
+    k->send = ls2h_macrom_send;
+}
+
+static const TypeInfo ls2h_macrom_info = {
+    .name          = TYPE_LS2H_MACROM,
+    .parent        = TYPE_I2C_SLAVE,
+    .instance_size = sizeof(Ls2hMacromState),
+    .class_init    = ls2h_macrom_class_init,
+};
 
 /* acpi */
 static void acpi_write(void *opaque, hwaddr addr, uint64_t val,
@@ -636,6 +691,7 @@ static void mips_ls2h_init(MachineState *machine)
     DriveInfo *dinfo;
     int64_t kernel_entry;
     CPUMIPSState *env;
+    I2CBus *i2cbus;
     ISABus *isabus;
     DeviceState *dev;
     MemoryRegion *mr;
@@ -850,34 +906,18 @@ static void mips_ls2h_init(MachineState *machine)
     sysbus_create_simple("sysbus-ahci", LS2H_SATA_REG_BASE - KSEG0_BASE, irq);
 
     /* I2C0 IO */
-    memory_region_init_alias(&s.i2c0_mem, NULL, "I2C0 I/O mem",
-                             get_system_io(), 
-                             LS2H_I2C0_REG_BASE - LS2H_IO_REG_BASE, 
-                             0x1000);
-    memory_region_add_subregion(get_system_memory(), 
-                                LS2H_I2C0_REG_BASE - KSEG0_BASE, 
-                                &s.i2c0_mem);
-
-    memory_region_init_io(&s.i2c0_io, NULL, &i2c0_io_ops, &s, 
-                          "I2C I/O", 0x1000);
-    memory_region_add_subregion(get_system_io(), 
-				LS2H_I2C0_REG_BASE - LS2H_IO_REG_BASE,
-				&s.i2c0_io);
+    irq = qdev_get_gpio_in(s.intc_dev, 7);
+    s.i2c0 = sysbus_create_simple("ls2h-i2c", LS2H_I2C0_REG_BASE - KSEG0_BASE,
+                                  irq);
+    i2cbus = (I2CBus *)qdev_get_child_bus(s.i2c0, "i2c");
+    i2c_create_slave(i2cbus, "ls2h-spd", 0xa8);
 
     /* I2C1 IO */
-    memory_region_init_alias(&s.i2c1_mem, NULL, "I2C1 I/O mem",
-                             get_system_io(), 
-                             LS2H_I2C1_REG_BASE - LS2H_IO_REG_BASE, 
-                             0x1000);
-    memory_region_add_subregion(get_system_memory(), 
-                                LS2H_I2C1_REG_BASE - KSEG0_BASE, 
-                                &s.i2c1_mem);
-
-    memory_region_init_io(&s.i2c1_io, NULL, &i2c1_io_ops, &s, 
-                          "I2C1 I/O", 0x1000);
-    memory_region_add_subregion(get_system_io(), 
-				LS2H_I2C1_REG_BASE - LS2H_IO_REG_BASE,
-				&s.i2c1_io);
+    irq = qdev_get_gpio_in(s.intc_dev, 8);
+    s.i2c1 = sysbus_create_simple("ls2h-i2c", LS2H_I2C1_REG_BASE - KSEG0_BASE,
+                                  irq);
+    i2cbus = (I2CBus *)qdev_get_child_bus(s.i2c1, "i2c");
+    i2c_create_slave(i2cbus, "ls2h-macrom", 0xa0);
 
     /* ACPI */
     memory_region_init_alias(&s.acpi_mem, NULL, "ACPI I/O mem",
@@ -944,6 +984,7 @@ static void mips_ls2h_init(MachineState *machine)
     isabus = isa_bus_new(NULL, &s.lpc_mem, get_system_io(), NULL);
     isa_bus_irqs(isabus, (qemu_irq *)&s.isa_irqs);
     isa_create_simple(isabus, "i8042");
+    //irq = qdev_get_gpio_in(s.intc_dev, 13);
 
 }
 
@@ -954,3 +995,12 @@ static void mips_ls2h_machine_init(MachineClass *mc)
 }
 
 DEFINE_MACHINE("ls2h", mips_ls2h_machine_init)
+
+/* register devices */
+static void ls2h_register_types(void)
+{
+    type_register_static(&ls2h_spd_info);
+    type_register_static(&ls2h_macrom_info);
+}
+
+type_init(ls2h_register_types)
