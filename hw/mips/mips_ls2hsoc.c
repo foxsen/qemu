@@ -941,7 +941,7 @@ static void mips_ls2h_init(MachineState *machine)
                                 LS2H_LPC_IO_BASE - KSEG0_BASE, 
                                 &s.lpc_mem);
 
-    isabus = isa_bus_new(NULL, &s.lpc_mem, get_system_io());
+    isabus = isa_bus_new(NULL, &s.lpc_mem, get_system_io(), NULL);
     isa_bus_irqs(isabus, (qemu_irq *)&s.isa_irqs);
     isa_create_simple(isabus, "i8042");
 
