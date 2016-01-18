@@ -11,7 +11,7 @@
 #include <hw/sysbus.h>
 
 #ifndef DEBUG_LS2H_I2C
-#define DEBUG_LS2H_I2C 1
+#define DEBUG_LS2H_I2C 0
 #endif
 
 /* I2C register offset and bit defines */

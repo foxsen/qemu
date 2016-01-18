@@ -313,6 +313,119 @@ static const MemoryRegionOps creg_io_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
+/* sysbus LPC implementation */
+#define TYPE_LS2H_LPC "ls2h-lpc"
+#define LS2H_LPC(obj) OBJECT_CHECK(Ls2hLPCState, (obj), TYPE_LS2H_LPC)
+
+typedef struct {
+    SysBusDevice parent_obj;
+
+    MemoryRegion mmio;
+
+    qemu_irq parent_irq;
+
+    int nirqs;
+
+    /* cfg0: SIRQ en; cfg1: int_en; cfg2: int_src; cfg3: int_clr */
+    uint32_t cfg[4];
+} Ls2hLPCState;
+
+static inline void ls2h_lpc_inth_update(Ls2hLPCState *s)
+{
+    if (s->cfg[1] & s->cfg[2]) {
+        qemu_set_irq(s->parent_irq, 1);
+    } else {
+        qemu_set_irq(s->parent_irq, 0);
+    }
+}
+
+static void ls2h_lpc_set_intr(void *opaque, int irq, int req)
+{
+    Ls2hLPCState *s = LS2H_LPC(opaque);
+
+    int mask = 1 << irq;
+
+    if (req) {
+        s->cfg[2] |= mask;
+    } else {
+        s->cfg[2] &= ~mask;
+    }
+
+    ls2h_lpc_inth_update(s);
+}
+
+static uint64_t ls2h_lpc_read(void *opaque, hwaddr addr,
+                               unsigned size)
+{
+    Ls2hLPCState *s = LS2H_LPC(opaque);
+    uint64_t value = s->cfg[(addr & 0xf) >> 2];
+    return value;
+}
+
+static void ls2h_lpc_write(void *opaque, hwaddr addr,
+                            uint64_t value, unsigned size)
+{
+    Ls2hLPCState *s = LS2H_LPC(opaque);
+
+    s->cfg[(addr & 0xf) >> 2] = value;
+
+    ls2h_lpc_inth_update(s);
+}
+
+static const MemoryRegionOps ls2h_lpc_mem_ops = {
+    .read = ls2h_lpc_read,
+    .write = ls2h_lpc_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4,
+    },
+};
+
+static void ls2h_lpc_reset(DeviceState *dev)
+{
+    Ls2hLPCState *s = LS2H_LPC(dev);
+    int i;
+
+    for (i = 0; i < 4; i++)
+        s->cfg[i] = 0;
+}
+
+static int ls2h_lpc_init(SysBusDevice *sbd)
+{
+    DeviceState *dev = DEVICE(sbd);
+    Ls2hLPCState *s = LS2H_LPC(dev);
+
+    s->nirqs = 18;
+    sysbus_init_irq(sbd, &s->parent_irq);
+    qdev_init_gpio_in(dev, ls2h_lpc_set_intr, s->nirqs);
+    memory_region_init_io(&s->mmio, OBJECT(s), &ls2h_lpc_mem_ops, s,
+                          "ls2h-lpc", 0x1000);
+    sysbus_init_mmio(sbd, &s->mmio);
+
+    return 0;
+}
+
+static Property ls2h_lpc_properties[] = {
+    DEFINE_PROP_END_OF_LIST(),
+};
+
+static void ls2h_lpc_class_init(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = ls2h_lpc_init;
+    dc->reset = ls2h_lpc_reset;
+    dc->props = ls2h_lpc_properties;
+}
+
+static const TypeInfo ls2h_lpc_info = {
+    .name          = "ls2h-lpc",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .class_init    = ls2h_lpc_class_init,
+    .instance_size = sizeof(Ls2hLPCState),
+};
 
 /** I2C slave implementations **/
 typedef enum i2c_state { I2C_STOP, I2C_SEND, I2C_RECV } i2c_state_t;
@@ -696,6 +809,7 @@ static void mips_ls2h_init(MachineState *machine)
     DeviceState *dev;
     MemoryRegion *mr;
     qemu_irq irq;
+    int i;
 
     /* init CPUs */
     if (cpu_model == NULL) {
@@ -907,16 +1021,16 @@ static void mips_ls2h_init(MachineState *machine)
 
     /* I2C0 IO */
     irq = qdev_get_gpio_in(s.intc_dev, 7);
-    s.i2c0 = sysbus_create_simple("ls2h-i2c", LS2H_I2C0_REG_BASE - KSEG0_BASE,
-                                  irq);
-    i2cbus = (I2CBus *)qdev_get_child_bus(s.i2c0, "i2c");
+    s.i2c0_dev = sysbus_create_simple("ls2h-i2c", 
+                                       LS2H_I2C0_REG_BASE - KSEG0_BASE, irq);
+    i2cbus = (I2CBus *)qdev_get_child_bus(s.i2c0_dev, "i2c");
     i2c_create_slave(i2cbus, "ls2h-spd", 0xa8);
 
     /* I2C1 IO */
     irq = qdev_get_gpio_in(s.intc_dev, 8);
-    s.i2c1 = sysbus_create_simple("ls2h-i2c", LS2H_I2C1_REG_BASE - KSEG0_BASE,
-                                  irq);
-    i2cbus = (I2CBus *)qdev_get_child_bus(s.i2c1, "i2c");
+    s.i2c1_dev = sysbus_create_simple("ls2h-i2c", 
+                                       LS2H_I2C1_REG_BASE - KSEG0_BASE, irq);
+    i2cbus = (I2CBus *)qdev_get_child_bus(s.i2c1_dev, "i2c");
     i2c_create_slave(i2cbus, "ls2h-macrom", 0xa0);
 
     /* ACPI */
@@ -972,7 +1086,14 @@ static void mips_ls2h_init(MachineState *machine)
     irq = qdev_get_gpio_in(s.intc_dev, 39);
     sysbus_create_simple("ls2h-dc", LS2H_DC_REG_BASE - KSEG0_BASE, irq);
 
-    /* keyboard/mouse */
+    /* LPC; keyboard/mouse etc. */
+    irq = qdev_get_gpio_in(s.intc_dev, 13);
+    s.lpc_dev = sysbus_create_simple("ls2h-lpc", 
+                                     LS2H_LPC_REG_BASE - KSEG0_BASE, irq);
+    for (i = 0; i < 16; i++) {
+        s.isa_irqs[i] = qdev_get_gpio_in(s.lpc_dev, i);
+    }
+
     memory_region_init_alias(&s.lpc_mem, NULL, "LPC I/O mem",
                              get_system_io(), 
                              0, /* note: offset 0 for isa */
@@ -981,10 +1102,11 @@ static void mips_ls2h_init(MachineState *machine)
                                 LS2H_LPC_IO_BASE - KSEG0_BASE, 
                                 &s.lpc_mem);
 
+    /* we don't really has isabus; fake one to use pckeyboard emulation */
     isabus = isa_bus_new(NULL, &s.lpc_mem, get_system_io(), NULL);
     isa_bus_irqs(isabus, (qemu_irq *)&s.isa_irqs);
     isa_create_simple(isabus, "i8042");
-    //irq = qdev_get_gpio_in(s.intc_dev, 13);
+
 
 }
 
@@ -1001,6 +1123,7 @@ static void ls2h_register_types(void)
 {
     type_register_static(&ls2h_spd_info);
     type_register_static(&ls2h_macrom_info);
+    type_register_static(&ls2h_lpc_info);
 }
 
 type_init(ls2h_register_types)

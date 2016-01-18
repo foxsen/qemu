@@ -304,7 +304,8 @@ typedef struct LS2hState {
 
     DeviceState *spidev;
     DeviceState *intc_dev;
-    DeviceState *i2c0, *i2c1;
+    DeviceState *i2c0_dev, *i2c1_dev;
+    DeviceState *lpc_dev;
 
 } LS2hState;
 
