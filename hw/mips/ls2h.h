@@ -288,13 +288,6 @@ typedef struct LS2hState {
     MemoryRegion uart3_io;
     MemoryRegion creg_mem;
     MemoryRegion creg_io;
-    MemoryRegion i2c0_mem;
-    MemoryRegion i2c0_io;
-    uint64_t i2c0_status, i2c0_addr, i2c0_offset, i2c0_data;
-
-    MemoryRegion i2c1_mem;
-    MemoryRegion i2c1_io;
-    uint64_t i2c1_status, i2c1_addr, i2c1_offset, i2c1_data;
 
     MemoryRegion sata_mem;
     MemoryRegion sata_io;
@@ -311,6 +304,7 @@ typedef struct LS2hState {
 
     DeviceState *spidev;
     DeviceState *intc_dev;
+    DeviceState *i2c0, *i2c1;
 
 } LS2hState;
 
