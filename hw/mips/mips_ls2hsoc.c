@@ -313,6 +313,66 @@ static const MemoryRegionOps creg_io_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
+/* GPU reg io */
+static void gpu_write(void *opaque, hwaddr addr, uint64_t val,
+                                unsigned int size)
+{
+    DPRINTF("gpu write addr %lx with val %lx size %d\n", addr, val, size);
+}
+
+static uint64_t gpu_read(void *opaque, hwaddr addr, unsigned size)
+{
+    uint64_t val = -1LL;
+
+    addr += LS2H_GPU_REG_BASE;
+    DPRINTF("gpu read addr %lx size %d val %lx\n", addr, size, val);
+    return val;
+}
+
+static const MemoryRegionOps gpu_io_ops = {
+    .read = gpu_read,
+    .write = gpu_write,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+    },
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+    },
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
+/* nand reg io */
+static void nand_write(void *opaque, hwaddr addr, uint64_t val,
+                                unsigned int size)
+{
+    DPRINTF("nand write addr %lx with val %lx size %d\n", addr, val, size);
+}
+
+static uint64_t nand_read(void *opaque, hwaddr addr, unsigned size)
+{
+    uint64_t val = -1LL;
+
+    addr += LS2H_NAND_REG_BASE;
+    DPRINTF("nand read addr %lx size %d val %lx\n", addr, size, val);
+    return val;
+}
+
+static const MemoryRegionOps nand_io_ops = {
+    .read = nand_read,
+    .write = nand_write,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+    },
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+    },
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
 /* sysbus LPC implementation */
 #define TYPE_LS2H_LPC "ls2h-lpc"
 #define LS2H_LPC(obj) OBJECT_CHECK(Ls2hLPCState, (obj), TYPE_LS2H_LPC)
@@ -1020,6 +1080,32 @@ static void mips_ls2h_init(MachineState *machine)
     /* SATA IO */
     irq = qdev_get_gpio_in(s.intc_dev, 37);
     sysbus_create_simple("sysbus-ahci", LS2H_SATA_REG_BASE - KSEG0_BASE, irq);
+
+    /* GPU REG IO */
+    memory_region_init_alias(&s.gpu_mem, NULL, "GPU reg io mem",
+                             get_system_io(), 
+                             LS2H_GPU_REG_BASE - LS2H_IO_REG_BASE, 
+                             0x800);
+    memory_region_add_subregion(get_system_memory(), 
+                                LS2H_GPU_REG_BASE - KSEG0_BASE, 
+                                &s.gpu_mem);
+    memory_region_init_io(&s.gpu_io, NULL, &gpu_io_ops, (void*)&s, 
+                          "GPU io", 0x800);
+    memory_region_add_subregion(get_system_io(), 
+				LS2H_GPU_REG_BASE - LS2H_IO_REG_BASE, &s.gpu_io);
+
+    /* nand REG IO */
+    memory_region_init_alias(&s.nand_mem, NULL, "nand reg io mem",
+                             get_system_io(), 
+                             LS2H_NAND_REG_BASE - LS2H_IO_REG_BASE, 
+                             0x800);
+    memory_region_add_subregion(get_system_memory(), 
+                                LS2H_NAND_REG_BASE - KSEG0_BASE, 
+                                &s.nand_mem);
+    memory_region_init_io(&s.nand_io, NULL, &nand_io_ops, (void*)&s, 
+                          "nand io", 0x800);
+    memory_region_add_subregion(get_system_io(), 
+				LS2H_NAND_REG_BASE - LS2H_IO_REG_BASE, &s.nand_io);
 
     /* I2C0 IO */
     irq = qdev_get_gpio_in(s.intc_dev, 7);
