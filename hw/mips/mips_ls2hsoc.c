@@ -40,6 +40,9 @@
 #include "sysemu/qtest.h"
 #include "qemu/error-report.h"
 #include "qemu/timer.h"
+#include "net/net.h"
+
+extern NetClientState *net_hub_add_port(int hub_id, const char *name);
 
 #include "ls2h.h"
 
@@ -901,8 +904,8 @@ static void mips_ls2h_init(MachineState *machine)
 
     /* memory above 256M mapped to 0x110000000 */
     memory_region_init_alias(&s.ram_hi, NULL, "ls2h.ram_hi", 
-            &s.ram, 0x10000000, s.ram_size - 256);
-    memory_region_add_subregion(get_system_memory(), 0x110000000, 
+            &s.ram, 0x10000000, s.ram_size - 0x10000000);
+    memory_region_add_subregion(get_system_memory(), 0x110000000ULL, 
             &s.ram_hi);
 
     memory_region_init_io(&s.mc_io, NULL, &mc_io_ops, &s, 
@@ -1164,11 +1167,54 @@ static void mips_ls2h_init(MachineState *machine)
 #endif
 
     /* gmac */
-    irq = qdev_get_gpio_in(s.intc_dev, 35);
-    sysbus_create_simple("xgmac", LS2H_GMAC0_REG_BASE - KSEG0_BASE, irq);
+    if (nd_table[0].used) {
+        /* replace default nic */
+        qemu_check_nic_model(&nd_table[0], "stmmac");
+        dev = qdev_create(NULL, "stmmac");
+        qdev_set_nic_properties(dev, &nd_table[0]);
+        qdev_init_nofail(dev);
+        sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 
+                        LS2H_GMAC0_REG_BASE - KSEG0_BASE);
+        irq = qdev_get_gpio_in(s.intc_dev, 35);
+        sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, irq);
 
-    irq = qdev_get_gpio_in(s.intc_dev, 36);
-    sysbus_create_simple("xgmac", LS2H_GMAC1_REG_BASE - KSEG0_BASE, irq);
+        qemu_check_nic_model(&nd_table[1], "stmmac");
+        dev = qdev_create(NULL, "stmmac");
+        qdev_set_nic_properties(dev, &nd_table[1]);
+        qdev_init_nofail(dev);
+        sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 
+                        LS2H_GMAC1_REG_BASE - KSEG0_BASE);
+        irq = qdev_get_gpio_in(s.intc_dev, 36);
+        sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, irq);
+    } else {
+        nd_table[0].used = true;
+        /* hardcoded hack, should parse the options */
+        //nd_table[0].netdev = qemu_find_netdev("net0");
+        nd_table[0].netdev = net_hub_add_port(0, NULL);
+        qemu_check_nic_model(&nd_table[0], "stmmac");
+        dev = qdev_create(NULL, "stmmac");
+        qdev_prop_set_uint32(dev, "phyaddr", 1);
+        qdev_set_nic_properties(dev, &nd_table[0]);
+        qdev_init_nofail(dev);
+        sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 
+                        LS2H_GMAC0_REG_BASE - KSEG0_BASE);
+        irq = qdev_get_gpio_in(s.intc_dev, 35);
+        sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, irq);
+
+        nd_table[1].used = true;
+        /* hardcoded hack, should parse the options */
+        //nd_table[0].netdev = qemu_find_netdev("net0");
+        nd_table[1].netdev = net_hub_add_port(0, NULL);
+        qemu_check_nic_model(&nd_table[1], "stmmac");
+        dev = qdev_create(NULL, "stmmac");
+        qdev_prop_set_uint32(dev, "phyaddr", 2);
+        qdev_set_nic_properties(dev, &nd_table[1]);
+        qdev_init_nofail(dev);
+        sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 
+                        LS2H_GMAC1_REG_BASE - KSEG0_BASE);
+        irq = qdev_get_gpio_in(s.intc_dev, 36);
+        sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, irq);
+    }
 
     /* display controller */
     irq = qdev_get_gpio_in(s.intc_dev, 39);
