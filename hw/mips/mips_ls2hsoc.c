@@ -608,6 +608,8 @@ static int ls2h_macrom_recv(I2CSlave *i2c)
         ret = (s->offset > 11) ? 0 : s->eeprom[s->offset];
     }
     DPRINTF("macrom recv %d at %d\n", ret, s->offset);
+    /* auto increase offset */
+    s->offset ++;
     return ret;
 }
 
