@@ -288,6 +288,10 @@ typedef struct LS2hState {
     MemoryRegion uart3_io;
     MemoryRegion creg_mem;
     MemoryRegion creg_io;
+    MemoryRegion gpu_mem;
+    MemoryRegion gpu_io;
+    MemoryRegion nand_mem;
+    MemoryRegion nand_io;
 
     MemoryRegion sata_mem;
     MemoryRegion sata_io;
@@ -302,6 +306,8 @@ typedef struct LS2hState {
     MemoryRegion lpc_mem;
     qemu_irq isa_irqs[16];
 
+    DeviceState *netdev0;
+    DeviceState *netdev1;
     DeviceState *spidev;
     DeviceState *intc_dev;
     DeviceState *i2c0_dev, *i2c1_dev;
