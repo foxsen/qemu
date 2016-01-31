@@ -1154,17 +1154,19 @@ static void mips_ls2h_init(MachineState *machine)
 				LS2H_RTC_REG_BASE - LS2H_IO_REG_BASE,
 				&s.rtc_io);
 
-#if 1
     /* ohci */
     dev = qdev_create(NULL, "sysbus-ohci");
-    qdev_prop_set_uint32(dev, "num-ports", 2);
+    qdev_prop_set_uint32(dev, "num-ports", 6);
     qdev_prop_set_uint64(dev, "dma-offset", 0);
     qdev_init_nofail(dev);
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0,
             LS2H_OHCI_REG_BASE - KSEG0_BASE);
     irq = qdev_get_gpio_in(s.intc_dev, 33);
     sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, irq);
-#endif
+
+    /* ehci */
+    irq = qdev_get_gpio_in(s.intc_dev, 32);
+    sysbus_create_simple("ls2h-ehci-usb", LS2H_EHCI_REG_BASE - KSEG0_BASE, irq);
 
     /* gmac */
     if (nd_table[0].used) {
