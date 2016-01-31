@@ -741,48 +741,65 @@ static const MemoryRegionOps acpi_io_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
-/* rtc io */
+/* sysbus RTC implementation */
+#define TYPE_LS2H_RTC "ls2h-rtc"
+#define LS2H_RTC(obj) OBJECT_CHECK(Ls2hRTCState, (obj), TYPE_LS2H_RTC)
+
+typedef struct {
+    SysBusDevice parent_obj;
+
+    qemu_irq irq[8];
+
+    MemoryRegion io;
+
+    uint32_t toy_trim, toy_lo, toy_hi, toy_match0, toy_match1, toy_match2;
+    uint32_t rtc_trim, rtc_count, rtc_match0, rtc_match1, rtc_match2, rtc_ctrl;
+} Ls2hRTCState;
+
+/* todo: interrupt */
 static void rtc_write(void *opaque, hwaddr addr, uint64_t val,
                                 unsigned int size)
 {
+    Ls2hRTCState *s = LS2H_RTC(opaque);
+
     uint64_t vaddr = addr + LS2H_RTC_REG_BASE;
     DPRINTF("rtc write addr %lx with val %lx size %d\n", addr, val, size);
     switch (vaddr) {
         case LS2H_TOY_TRIM_REG:
-            s.toy_trim = (unsigned int) val;
+            s->toy_trim = (uint32_t) val;
             break;
         case LS2H_TOY_WRITE0_REG:
-            s.toy_lo = (unsigned int) val;
+            s->toy_lo = (uint32_t) val;
             break;
         case LS2H_TOY_WRITE1_REG:
-            s.toy_hi = (unsigned int) val;
+            s->toy_hi = (uint32_t) val;
             break;
         case LS2H_TOY_MATCH0_REG:
-            s.toy_match0 = (unsigned int) val;
+            s->toy_match0 = (uint32_t) val;
             break;
         case LS2H_TOY_MATCH1_REG:
-            s.toy_match1 = (unsigned int) val;
+            s->toy_match1 = (uint32_t) val;
             break;
         case LS2H_TOY_MATCH2_REG:
-            s.toy_match2 = (unsigned int) val;
+            s->toy_match2 = (uint32_t) val;
             break;
         case LS2H_RTC_CTRL_REG:
-            s.rtc_ctrl = (unsigned int) val;
+            s->rtc_ctrl = (uint32_t) val;
             break;
         case LS2H_RTC_TRIM_REG:
-            s.rtc_trim = (unsigned int) val;
+            s->rtc_trim = (uint32_t) val;
             break;
         case LS2H_RTC_WRITE0_REG:
-            s.rtc_count = (unsigned int) val;
+            s->rtc_count = (uint32_t) val;
             break;
         case LS2H_RTC_MATCH0_REG:
-            s.rtc_match0 = (unsigned int) val;
+            s->rtc_match0 = (uint32_t) val;
             break;
         case LS2H_RTC_MATCH1_REG:
-            s.rtc_match1 = (unsigned int) val;
+            s->rtc_match1 = (uint32_t) val;
             break;
         case LS2H_RTC_MATCH2_REG:
-            s.rtc_match2 = (unsigned int) val;
+            s->rtc_match2 = (uint32_t) val;
             break;
         default:
             printf("invalid rtc address %lx\n", vaddr);
@@ -791,13 +808,16 @@ static void rtc_write(void *opaque, hwaddr addr, uint64_t val,
 
 static uint64_t rtc_read(void *opaque, hwaddr addr, unsigned size)
 {
+    Ls2hRTCState *s = LS2H_RTC(opaque);
     uint64_t vaddr = addr + LS2H_RTC_REG_BASE;
     uint64_t val;
     struct tm tm;
+
     qemu_get_timedate(&tm, 0);
+
     switch (vaddr) {
         case LS2H_TOY_TRIM_REG:
-            val = s.toy_trim; 
+            val = s->toy_trim; 
             break;
         case LS2H_TOY_READ0_REG:
             val = ( (((tm.tm_mon + 1) & 0x3f) << 26) |
@@ -812,39 +832,38 @@ static uint64_t rtc_read(void *opaque, hwaddr addr, unsigned size)
             DPRINTF("year %d\n", tm.tm_year);
             break;
         case LS2H_TOY_MATCH0_REG:
-            val = s.toy_match0;
+            val = s->toy_match0;
             break;
         case LS2H_TOY_MATCH1_REG:
-            val = s.toy_match1;
+            val = s->toy_match1;
             break;
         case LS2H_TOY_MATCH2_REG:
-            val = s.toy_match2;
+            val = s->toy_match2;
             break;
         case LS2H_RTC_TRIM_REG:
-            val = s.rtc_trim;
+            val = s->rtc_trim;
             break;
         case LS2H_RTC_READ0_REG:
-            val = s.rtc_count;
+            val = s->rtc_count;
             break;
         case LS2H_RTC_MATCH0_REG:
-            val = s.rtc_match0;
+            val = s->rtc_match0;
             break;
         case LS2H_RTC_MATCH1_REG:
-            val = s.rtc_match1;
+            val = s->rtc_match1;
             break;
         case LS2H_RTC_MATCH2_REG:
-            val = s.rtc_match2;
+            val = s->rtc_match2;
             break;
         default:
             printf("invalid rtc address %lx\n", vaddr);
     }
 
-    DPRINTF("mc read addr %lx size %d,val=%lx,pc=%lx\n", addr, size, val,
-            s.cpu->env.active_tc.PC);
+    DPRINTF("RTC read addr %lx size %d,val=%lx\n", addr, size, val);
     return val;
 }
 
-static const MemoryRegionOps rtc_io_ops = {
+static const MemoryRegionOps ls2h_rtc_ops = {
     .read = rtc_read,
     .write = rtc_write,
     .impl = {
@@ -854,7 +873,48 @@ static const MemoryRegionOps rtc_io_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
+static void ls2h_rtc_reset(DeviceState *dev)
+{
+    //Ls2hRTCState *s = LS2H_RTC(dev);
+}
 
+static int ls2h_rtc_init(SysBusDevice *sbd)
+{
+    DeviceState *dev = DEVICE(sbd);
+    Ls2hRTCState *s = LS2H_RTC(dev);
+    int i;
+
+    for (i = 0; i < 8; i++)
+        sysbus_init_irq(sbd, &s->irq[i]);
+    memory_region_init_io(&s->io, OBJECT(s), &ls2h_rtc_ops, s,
+                          "ls2h-rtc", 0x8000);
+    sysbus_init_mmio(sbd, &s->io);
+
+    return 0;
+}
+
+static Property ls2h_rtc_properties[] = {
+    DEFINE_PROP_END_OF_LIST(),
+};
+
+static void ls2h_rtc_class_init(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = ls2h_rtc_init;
+    dc->reset = ls2h_rtc_reset;
+    dc->props = ls2h_rtc_properties;
+}
+
+static const TypeInfo ls2h_rtc_info = {
+    .name          = "ls2h-rtc",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .class_init    = ls2h_rtc_class_init,
+    .instance_size = sizeof(Ls2hRTCState),
+};
+
+/* machine init entrance */
 static const int sector_len = 64 * 1024;
 static void mips_ls2h_init(MachineState *machine)
 {
@@ -1140,19 +1200,15 @@ static void mips_ls2h_init(MachineState *machine)
 				&s.acpi_io);
 
     /* RTC */
-    memory_region_init_alias(&s.rtc_mem, NULL, "RTC I/O mem",
-                             get_system_io(), 
-                             LS2H_RTC_REG_BASE - LS2H_IO_REG_BASE, 
-                             0x8000);
-    memory_region_add_subregion(get_system_memory(), 
-                                LS2H_RTC_REG_BASE - KSEG0_BASE, 
-                                &s.rtc_mem);
-
-    memory_region_init_io(&s.rtc_io, NULL, &rtc_io_ops, &s, 
-                          "RTC I/O", 0x8000);
-    memory_region_add_subregion(get_system_io(), 
-				LS2H_RTC_REG_BASE - LS2H_IO_REG_BASE,
-				&s.rtc_io);
+    {
+        qemu_irq irq[8];
+        int i;
+        for (i = 0; i < 8; i++)
+            irq[i] = qdev_get_gpio_in(s.intc_dev, 14 + i);
+        sysbus_create_varargs("ls2h-rtc", LS2H_RTC_REG_BASE - KSEG0_BASE, 
+           irq[0], irq[1], irq[2], irq[3], irq[4], irq[5], irq[6], irq[7]
+           , NULL);
+    }
 
     /* ohci */
     dev = qdev_create(NULL, "sysbus-ohci");
@@ -1260,6 +1316,7 @@ static void ls2h_register_types(void)
     type_register_static(&ls2h_spd_info);
     type_register_static(&ls2h_macrom_info);
     type_register_static(&ls2h_lpc_info);
+    type_register_static(&ls2h_rtc_info);
 }
 
 type_init(ls2h_register_types)
