@@ -298,11 +298,6 @@ typedef struct LS2hState {
     MemoryRegion acpi_mem;
     MemoryRegion acpi_io;
 
-    MemoryRegion rtc_mem;
-    MemoryRegion rtc_io;
-    unsigned int toy_trim, toy_lo, toy_hi, toy_match0, toy_match1, toy_match2;
-    unsigned int rtc_trim, rtc_count, rtc_match0, rtc_match1, rtc_match2, rtc_ctrl;
-
     MemoryRegion lpc_mem;
     qemu_irq isa_irqs[16];
 
