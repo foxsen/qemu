@@ -3847,6 +3847,7 @@ static void gen_loongson_multimedia(DisasContext *ctx, int rd, int rs, int rt)
     TCGv_i64 t0, t1;
 
     opc = MASK_LMI(ctx->opcode);
+
     switch (opc) {
     case OPC_ADD_CP2:
     case OPC_SUB_CP2:
@@ -3870,6 +3871,8 @@ static void gen_loongson_multimedia(DisasContext *ctx, int rd, int rs, int rt)
     case OPC_##UP: gen_helper_##LO(t0, t0); break
 #define LMI_DIRECT(UP, LO, OP) \
     case OPC_##UP: tcg_gen_##OP##_i64(t0, t0, t1); break
+#define LMI_DIRECT1(UP, LO, OP) \
+    case OPC_##UP: tcg_gen_##OP##_i64(t0, t1, t0); break
 
     switch (opc) {
     LMI_HELPER(PADDSH, paddsh);
@@ -3935,8 +3938,10 @@ static void gen_loongson_multimedia(DisasContext *ctx, int rd, int rs, int rt)
     LMI_DIRECT(XOR_CP2, xor, xor);
     LMI_DIRECT(NOR_CP2, nor, nor);
     LMI_DIRECT(AND_CP2, and, and);
-    LMI_DIRECT(PANDN, pandn, andc);
-    LMI_DIRECT(OR, or, or);
+    /* loongson andn seems to be rt = !rs & rt instead of rs & !rt */
+    //LMI_DIRECT(PANDN, pandn, andc);
+    LMI_DIRECT1(PANDN, pandn, andc);
+    LMI_DIRECT(OR_CP2, or, or);
 
     case OPC_PINSRH_0:
         tcg_gen_deposit_i64(t0, t0, t1, 0, 16);
