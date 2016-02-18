@@ -490,7 +490,7 @@ static void enet_write(void *opaque, hwaddr addr,
             s->descriptor_size = 16;
         }
         s->skip_size = (value & 0x7c) * 4;
-        fprintf(stderr, "descriptor size %d, skip size %d\n", 
+        DPRINTF("descriptor size %d, skip size %d\n", \
                 s->descriptor_size, s->skip_size);
         break;
     case DMA_XMT_POLL_DEMAND:
