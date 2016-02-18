@@ -736,7 +736,7 @@ static const mips_def_t mips_defs[] =
         .SYNCI_Step = 16,
         .CCRes = 2,
         .CP0_Status_rw_bitmask = 0xF5D0FFFF,   
-        .CP1_fcr0 = (0x5 << FCR0_PRID) | (0x1 << FCR0_REV),
+        .CP1_fcr0 = (0x5 << FCR0_PRID) | (0x1 << FCR0_REV) | (0x1 << FCR0_F64),
         .CP0_PageGrain = (1 << CP0PG_ELPA),
         .SEGBITS = 40,
         /* in fact 2H has only 36bit physical address, but it uses
@@ -745,7 +745,7 @@ static const mips_def_t mips_defs[] =
            .CP0_Config3 & .CP0_PageGrain is set for this purpose
          */
         .PABITS = 40,
-        .insn_flags = CPU_MIPS64R2,
+        .insn_flags = CPU_MIPS64R2 | INSN_LOONGSON2F,
         .mmu_type = MMU_TYPE_R4000,
     },
     {
