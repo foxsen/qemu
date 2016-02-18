@@ -1141,8 +1141,13 @@ static void mips_ls2h_init(MachineState *machine)
 				LS2H_CHIP_CFG_REG_BASE - LS2H_IO_REG_BASE, &s.creg_io, 0);
 
     /* SATA IO */
+    dev = qdev_create(NULL, "sysbus-ahci");
+    qdev_prop_set_uint32(dev, "num-ports", 2);
+    qdev_init_nofail(dev);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0,
+            LS2H_SATA_REG_BASE - KSEG0_BASE);
     irq = qdev_get_gpio_in(s.intc_dev, 37);
-    sysbus_create_simple("sysbus-ahci", LS2H_SATA_REG_BASE - KSEG0_BASE, irq);
+    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, irq);
 
     /* GPU REG IO */
     memory_region_init_alias(&s.gpu_mem, NULL, "GPU reg io mem",
