@@ -705,6 +705,117 @@ static const TypeInfo ls2h_macrom_info = {
     .class_init    = ls2h_macrom_class_init,
 };
 
+/* I2C slave implementation for EDID data */
+#define TYPE_LS2H_EDIDROM "ls2h-edidrom"
+#define LS2H_EDIDROM(obj) OBJECT_CHECK(Ls2hEDIDromState, (obj),TYPE_LS2H_EDIDROM)
+
+/* 800x600 EDID, see Documentation/EDID/ in kernel tree for more information */
+static const unsigned char eeprom_edid[] = { 
+0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x31,0xD8,0x00,0x00,0x00,0x00,0x00,0x00,
+0x05,0x16,0x01,0x03,0x6D,0x1B,0x14,0x78,0xEA,0x5E,0xC0,0xA4,0x59,0x4A,0x98,0x25,
+0x20,0x50,0x54,0x01,0x00,0x00,0x45,0x40,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,
+0x01,0x01,0x01,0x01,0x01,0x01,0xA0,0x0F,0x20,0x00,0x31,0x58,0x1C,0x20,0x28,0x80,
+0x14,0x00,0x15,0xD0,0x10,0x00,0x00,0x1E,0x00,0x00,0x00,0xFF,0x00,0x4C,0x69,0x6E,
+0x75,0x78,0x20,0x23,0x30,0x0A,0x20,0x20,0x20,0x20,0x00,0x00,0x00,0xFD,0x00,0x3B,
+0x3D,0x24,0x26,0x05,0x00,0x0A,0x20,0x20,0x20,0x20,0x20,0x20,0x00,0x00,0x00,0xFC,
+0x00,0x4C,0x69,0x6E,0x75,0x78,0x20,0x53,0x56,0x47,0x41,0x0A,0x20,0x20,0x00,0xC2
+};
+
+typedef struct {
+    I2CSlave parent_obj;
+
+    i2c_state_t state;
+    uint8_t offset;
+    int len;
+
+    const uint8_t *eeprom;
+} Ls2hEDIDromState;
+
+static int ls2h_edidrom_send(I2CSlave *i2c, uint8_t data)
+{
+    Ls2hEDIDromState *s = LS2H_EDIDROM(i2c);
+    if (s->state == I2C_SEND) { 
+        if (s->len == 0) {
+            s->offset = data << 8;
+            s->len = 1;
+        } else if (s->len == 1) {
+            s->offset |= data;
+            s->len = 2;
+        } else {
+          fprintf(stderr, "addr sent with wrong len %d\n", s->len);
+        }
+    } else {
+        fprintf(stderr, "data sent in wrong state %d\n", s->state);
+    }
+    return 0;
+}
+
+static void ls2h_edidrom_event(I2CSlave *i2c, enum i2c_event event)
+{
+    Ls2hEDIDromState *s = LS2H_EDIDROM(i2c);
+    switch (event) {
+        case I2C_START_SEND:
+            s->state = I2C_SEND;
+            break;
+        case I2C_START_RECV:
+            s->state = I2C_RECV;
+            break;
+        case I2C_FINISH:
+            s->state = I2C_STOP;
+            s->len = 0;
+            s->offset = 0;
+            break;
+        case I2C_NACK:
+            break;
+    }
+}
+
+static int ls2h_edidrom_recv(I2CSlave *i2c)
+{
+    int ret;
+    Ls2hEDIDromState *s = LS2H_EDIDROM(i2c);
+
+    if (s->state != I2C_RECV) {
+        fprintf(stderr, "i2c receive in wrong state %d\n", s->state);
+        ret = -1;
+    } else {
+        ret = (s->offset > 11) ? 0 : s->eeprom[s->offset];
+    }
+    DPRINTF("edidrom recv %d at %d\n", ret, s->offset);
+    /* auto increase offset */
+    s->offset ++;
+    return ret;
+}
+
+static int ls2h_edidrom_init(I2CSlave *i2c)
+{
+    Ls2hEDIDromState *s = LS2H_EDIDROM(i2c);
+
+    s->offset = 0;
+    s->state = I2C_STOP;
+    s->len = 0;
+    s->eeprom = eeprom_edid;
+
+    return 0;
+}
+
+static void ls2h_edidrom_class_init(ObjectClass *klass, void *data)
+{
+    I2CSlaveClass *k = I2C_SLAVE_CLASS(klass);
+
+    k->init = ls2h_edidrom_init;
+    k->event = ls2h_edidrom_event;
+    k->recv = ls2h_edidrom_recv;
+    k->send = ls2h_edidrom_send;
+}
+
+static const TypeInfo ls2h_edidrom_info = {
+    .name          = TYPE_LS2H_EDIDROM,
+    .parent        = TYPE_I2C_SLAVE,
+    .instance_size = sizeof(Ls2hEDIDromState),
+    .class_init    = ls2h_edidrom_class_init,
+};
+
 /* acpi */
 static void acpi_write(void *opaque, hwaddr addr, uint64_t val,
                                 unsigned int size)
@@ -1188,6 +1299,7 @@ static void mips_ls2h_init(MachineState *machine)
                                        LS2H_I2C1_REG_BASE - KSEG0_BASE, irq);
     i2cbus = (I2CBus *)qdev_get_child_bus(s.i2c1_dev, "i2c");
     i2c_create_slave(i2cbus, "ls2h-macrom", 0xa0);
+    i2c_create_slave(i2cbus, "ls2h-edidrom", 0x50);
 
     /* ACPI */
     memory_region_init_alias(&s.acpi_mem, NULL, "ACPI I/O mem",
@@ -1320,6 +1432,7 @@ static void ls2h_register_types(void)
 {
     type_register_static(&ls2h_spd_info);
     type_register_static(&ls2h_macrom_info);
+    type_register_static(&ls2h_edidrom_info);
     type_register_static(&ls2h_lpc_info);
     type_register_static(&ls2h_rtc_info);
 }
