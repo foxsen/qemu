@@ -267,22 +267,20 @@ static void creg_write(void *opaque, hwaddr addr, uint64_t val,
             s.scache0_addr = val & ( (1LL << PA_BITS) - 1);
             DPRINTF("enable scache access %lx %lx\n", s.scache0_addr, size);
 
-            memory_region_init_alias(&s.scache0_ram, NULL, "ls2h.scache", 
-                    &s.ram, 0, s.ram_size);
-            memory_region_add_subregion(get_system_memory(), s.scache0_addr, 
-                    &s.scache0_ram);
+            if (s.scache0_ram.ram_addr == 0) {
+              memory_region_init_ram(&s.scache0_ram, NULL, "ls2h.scache", 
+                    size, &error_fatal);
+            } else {
+              memory_region_set_enabled(&s.scache0_ram, 1);
+            }
+            memory_region_add_subregion_overlap(get_system_memory(), 
+                    s.scache0_addr, &s.scache0_ram, 1);
         } else {
             DPRINTF("disable scache locked access\n");
             memory_region_del_subregion(get_system_memory(), &s.scache0_ram);
             memory_region_set_enabled(&s.scache0_ram, 0);
         }
 
-#if 0
-        memory_region_init_ram(&s.scache0_ram, NULL, "ls2h.scache", 
-                size, &error_fatal);
-        memory_region_add_subregion(get_system_memory(), s.scache0_addr, 
-                &s.scache0_ram);
-#endif
     } else if (addr == 0x84240) {
         s.scache0_mask = val;
     }
@@ -1078,6 +1076,10 @@ static void mips_ls2h_init(MachineState *machine)
             &s.ram, 0x10000000, s.ram_size - 0x10000000);
     memory_region_add_subregion(get_system_memory(), 0x110000000ULL, 
             &s.ram_hi);
+    memory_region_init_alias(&s.ram_hi2, NULL, "ls2h.ram_hi2", 
+            &s.ram, 0, s.ram_size);
+    memory_region_add_subregion_overlap(get_system_memory(), 0x1000000000ULL, 
+            &s.ram_hi2, 0);
 
     memory_region_init_io(&s.mc_io, NULL, &mc_io_ops, &s, 
                           "memory controller I/O", 0x1000);
