@@ -265,20 +265,17 @@ static void creg_write(void *opaque, hwaddr addr, uint64_t val,
         if (val != 0) {
             uint64_t size = (~s.scache0_mask & ((1LL<< PA_BITS) - 1)) + 1;
             s.scache0_addr = val & ( (1LL << PA_BITS) - 1);
-            DPRINTF("enable scache access %lx %lx\n", s.scache0_addr, size);
+            fprintf(stderr, "enable scache access %lx %lx\n", s.scache0_addr, size);
 
-            if (s.scache0_ram.ram_addr == 0) {
-              memory_region_init_ram(&s.scache0_ram, NULL, "ls2h.scache", 
+            memory_region_init_ram(&s.scache0_ram, NULL, "ls2h.scache", 
                     size, &error_fatal);
-            } else {
-              memory_region_set_enabled(&s.scache0_ram, 1);
-            }
+
             memory_region_add_subregion_overlap(get_system_memory(), 
                     s.scache0_addr, &s.scache0_ram, 1);
         } else {
             DPRINTF("disable scache locked access\n");
             memory_region_del_subregion(get_system_memory(), &s.scache0_ram);
-            memory_region_set_enabled(&s.scache0_ram, 0);
+            memory_region_unref(&s.scache0_ram);
         }
 
     } else if (addr == 0x84240) {

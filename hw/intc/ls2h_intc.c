@@ -131,7 +131,8 @@ static uint64_t ls2h_inth_read(void *opaque, hwaddr addr,
     ls2h_intr_handler_bank *bank;
 
     /* MSI port write only*/
-    if (addr == 0) return -1;
+    if (addr < 0x40) return -1;
+
     addr = addr - 0x40;
     bank_no = addr / 24;
     reg_offset = addr % 24;
@@ -157,6 +158,7 @@ static void ls2h_inth_write(void *opaque, hwaddr addr,
         reg_offset = 8;
         value = 1 << (value & 0x1f);
     } else {
+        if (addr < 0x40) return;
         addr = addr - 0x40;
         bank_no = addr / 24;
         reg_offset = addr % 24;
@@ -200,6 +202,10 @@ static const MemoryRegionOps ls2h_inth_mem_ops = {
     .write = ls2h_inth_write,
     .endianness = DEVICE_NATIVE_ENDIAN,
     .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4,
+    },
+    .impl = {
         .min_access_size = 4,
         .max_access_size = 4,
     },
