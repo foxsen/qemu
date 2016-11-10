@@ -1,7 +1,7 @@
 /*
- * QEMU Loongson 2H reference board support
+ * QEMU Loongson 3A board(Lemote LX-1507) support
  *
- * Copyright (c) 2015 Fuxin Zhang (zhangfx@lemote.com)
+ * Copyright (c) 2016 Fuxin Zhang (zhangfx@lemote.com)
  * This code is licensed under the GNU GPL v2.
  *
  * Contributions after 2012-01-13 are licensed under the terms of the
@@ -9,8 +9,7 @@
  */
 
 /*
- * Loongson 2HSoC reference board, information(pmon/manuals etc.) refer to:
- *  http://wiki.loongnix.org/index.php/2HSoc%E5%BC%80%E5%8F%91%E6%9D%BF
+ * Lemote LX-1507 pc board, using Loongson 3A 2000 cpu.
  *
  */
 
@@ -44,13 +43,13 @@
 
 extern NetClientState *net_hub_add_port(int hub_id, const char *name);
 
-#include "ls2h.h"
+#include "ls3a.h"
 
-//#define DEBUG_LS2HSOC
+//#define DEBUG_LM1507
 
-#if defined (DEBUG_LS2HSOC)
+#if defined (DEBUG_LM1507)
 #  define DPRINTF(fmt, ...) \
-    do { fprintf(stderr, "LS2HSoC: " fmt, ## __VA_ARGS__); } while (0)
+    do { fprintf(stderr, "LM1507: " fmt, ## __VA_ARGS__); } while (0)
 #else
 static inline GCC_FMT_ATTR(1, 2) int DPRINTF(const char *fmt, ...)
 {
@@ -62,7 +61,7 @@ static inline GCC_FMT_ATTR(1, 2) int DPRINTF(const char *fmt, ...)
 #define ENVP_NB_ENTRIES	 	16
 #define ENVP_ENTRY_SIZE	 	256
 
-#define LS2H_BIOSNAME "pmon_ls2h.bin"
+#define LM1507_BIOSNAME "pmon_lm1507.bin"
 
 static struct _loaderparams {
     int ram_size;
@@ -193,47 +192,236 @@ static void main_cpu_reset(void *opaque)
     CPUMIPSState *env = &cpu->env;
 
     cpu_reset(CPU(cpu));
-    /* TODO: 2H reset stuff */
+    /* TODO: 3A reset stuff */
     if (loaderparams.kernel_filename) {
         env->CP0_Status &= ~((1 << CP0St_BEV) | (1 << CP0St_ERL));
     }
 }
 
-
-static LS2hState s;
-
-/* memory controller io */
-static uint64_t mc_values[180];
-static void mc_write(void *opaque, hwaddr addr, uint64_t val,
-                                unsigned int size)
+/* inter-processor interrupts */
+static void gipi_writel(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
-    DPRINTF("mc write addr %lx with val %lx size %d\n", addr, val, size);
-    if (addr < 180 * 16) 
-        mc_values[addr/16] = val;
+    gipiState * s = opaque;
+    CPUState *cpu = current_cpu;
+
+    int node = (addr >> 44) & 3;
+	int coreno = (addr >> 8) & 3;
+	int no = coreno + node * 4;
+    
+    if(size!=4) hw_error("size not 4");
+
+//    printf("gipi_writel addr=%llx val=%8x\n", addr, val);
+    addr &= 0xff;
+    switch(addr){
+        case CORE0_STATUS_OFF: 
+            hw_error("CORE0_SET_OFF Can't be write\n");
+            break;
+        case CORE0_EN_OFF:
+		if((cpu->mem_io_vaddr&0xff)!=addr) break;
+            s->core[no].en = val;
+            break;
+        case CORE0_SET_OFF:
+            s->core[no].status |= val;
+            qemu_irq_raise(s->core[no].irq);
+            break;
+        case CORE0_CLEAR_OFF:
+		if((cpu->mem_io_vaddr&0xff)!=addr) break;
+            s->core[no].status ^= val;
+            qemu_irq_lower(s->core[no].irq);
+            break;
+        case 0x20 ... 0x3c:
+            s->core[no].buf[(addr-0x20)/4] = val;
+            break;
+        default:
+            break;
+       }
+    DPRINTF("gipi_write: addr=0x%02lx val=0x%02lx cpu=%d\n", addr, val, 
+            (int)current_cpu->cpu_index);
 }
 
-static uint64_t mc_read(void *opaque, hwaddr addr, unsigned size)
+static uint64_t gipi_readl(void *opaque, hwaddr addr, unsigned size)
 {
-    LS2hState *s = (LS2hState *)opaque;
+    gipiState * s = opaque;
+
+    uint32_t ret = 0;
+    int node = (addr >> 44) & 3;
+	int coreno = (addr >> 8) & 3;
+	int no = coreno + node*4;
+    addr &= 0xff;
+
+    if(size!=4) hw_error("size not 4 %d", size);
+
+    switch(addr){
+        case CORE0_STATUS_OFF: 
+            ret =  s->core[no].status;
+            break;
+        case CORE0_EN_OFF:
+            ret =  s->core[no].en;
+            break;
+        case CORE0_SET_OFF:
+            ret = 0;//hw_error("CORE0_SET_OFF Can't be Read\n");
+            break;
+        case CORE0_CLEAR_OFF:
+            ret = 0;//hw_error("CORE0_CLEAR_OFF Can't be Read\n");
+        case 0x20 ... 0x3c:
+            ret = s->core[no].buf[(addr-0x20)/4];
+            break;
+        default:
+            break;
+       }
+
+    DPRINTF("gipi_read: addr=0x%02lx val=0x%02x cpu=%d\n", addr, ret, 
+            (int)current_cpu->cpu_index);
+    return ret;
+}
+
+static const MemoryRegionOps gipi_ops = {
+    .read = gipi_readl,
+    .write = gipi_writel,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+};
+
+#if 0
+static int board_map_irq(int bus,int dev,int func,int pin)
+{
+    return pin;
+}
+#endif
+
+static void ls3a_serial_set_irq(void *opaque, int irq, int level)
+{
+    int i;
+    LM1507State *s = (LM1507State *)opaque;
+    for(i = 0; i < smp_cpus; i++)
+        qemu_set_irq(s->mycpu[i]->irq[2], level);
+}
+
+static LM1507State s;
+
+/* memory controller io */
+static uint64_t mc0_values[180];
+static void mc0_write(void *opaque, hwaddr addr, uint64_t val,
+                                unsigned int size)
+{
+    DPRINTF("mc0 write addr %lx with val %lx size %d\n", addr, val, size);
+    if (addr < 180 * 16) 
+        mc0_values[addr/16] = val;
+}
+
+static uint64_t mc0_read(void *opaque, hwaddr addr, unsigned size)
+{
+    //LM1507State *s = (LM1507State *)opaque;
     uint64_t val = -1;
     if (addr == 0x10) {
         /* bit 0 is for dll lock status */
-        val = mc_values[1] | 0x1;
+        val = mc0_values[1] | 0x1;
     } else if (addr == 0x960) {
         /* not clear from doc */
-        val = mc_values[0x96] | 0x100;
+        val = mc0_values[0x96] | 0x100;
     } else if (addr < 180 * 16) {
-        val = mc_values[addr / 16];
+        val = mc0_values[addr / 16];
     }
 
-    DPRINTF("mc read addr %lx size %d,val=%lx,pc=%lx\n", addr, size, val,
-            s->cpu->env.active_tc.PC);
+    DPRINTF("mc0 read addr %lx size %d,val=%lx\n", addr, size, val);
     return val;
 }
 
-static const MemoryRegionOps mc_io_ops = {
-    .read = mc_read,
-    .write = mc_write,
+static const MemoryRegionOps mc0_io_ops = {
+    .read = mc0_read,
+    .write = mc0_write,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+    },
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+    },
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
+static uint64_t mc1_values[180];
+static void mc1_write(void *opaque, hwaddr addr, uint64_t val,
+                                unsigned int size)
+{
+    DPRINTF("mc1 write addr %lx with val %lx size %d\n", addr, val, size);
+    if (addr < 180 * 16) 
+        mc1_values[addr/16] = val;
+}
+
+static uint64_t mc1_read(void *opaque, hwaddr addr, unsigned size)
+{
+    //LM1507State *s = (LM1507State *)opaque;
+    uint64_t val = -1;
+    if (addr == 0x10) {
+        /* bit 0 is for dll lock status */
+        val = mc1_values[1] | 0x1;
+    } else if (addr == 0x960) {
+        /* not clear from doc */
+        val = mc1_values[0x96] | 0x100;
+    } else if (addr < 180 * 16) {
+        val = mc1_values[addr / 16];
+    }
+
+    DPRINTF("mc1 read addr %lx size %d,val=%lx\n", addr, size, val);
+    return val;
+}
+
+static const MemoryRegionOps mc1_io_ops = {
+    .read = mc1_read,
+    .write = mc1_write,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+    },
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+    },
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
+/* chip misc io */
+static void misc_write(void *opaque, hwaddr addr, uint64_t val,
+                                unsigned int size)
+{
+    DPRINTF("misc write addr %lx with val %lx size %d\n", addr, val, size);
+
+    /* chip config0 */
+    if (addr == 0x180) {
+        /* bit 4 is MC0 ddr confspace disable */
+        if (val & (1<<4)) {
+            memory_region_set_enabled(&s.mc0_mem, 0);
+
+            DPRINTF("MC0 memory space disabled\n");
+        } else {
+            memory_region_set_enabled(&s.mc0_mem, 1);
+            DPRINTF("MC0 memory space enabled\n");
+        }
+        /* bit 9 is MC1 ddr confspace disable */
+        if (val & (1<<9)) {
+            memory_region_set_enabled(&s.mc1_mem, 0);
+
+            DPRINTF("MC1 memory space disabled\n");
+        } else {
+            memory_region_set_enabled(&s.mc1_mem, 1);
+            DPRINTF("MC1 memory space enabled\n");
+        }
+    } 
+}
+
+static uint64_t misc_read(void *opaque, hwaddr addr, unsigned size)
+{
+    //LM1507State *s = (LM1507State *)opaque;
+    uint64_t val = -1;
+
+    DPRINTF("misc read addr %lx size %d,val=%lx\n", addr, size, val);
+    return val;
+}
+
+static const MemoryRegionOps misc_io_ops = {
+    .read = misc_read,
+    .write = misc_write,
     .valid = {
         .min_access_size = 1,
         .max_access_size = 8,
@@ -250,24 +438,13 @@ static void creg_write(void *opaque, hwaddr addr, uint64_t val,
                                 unsigned int size)
 {
     DPRINTF("creg write addr %lx with val %lx size %d\n", addr, val, size);
-    /* chip config0 */
     if (addr == 0x200) {
-        /* bit 13 set is to close memory controller space */
-        if (val & (1<<13)) {
-            memory_region_set_enabled(&s.mc_mem, 0);
-
-            DPRINTF("memory space enabled\n");
-        }else {
-            memory_region_set_enabled(&s.mc_mem, 1);
-            DPRINTF("memory space disabled\n");
-        }
-    } else if (addr == 0x84200) {
         if (val != 0) {
             uint64_t size = (~s.scache0_mask & ((1LL<< PA_BITS) - 1)) + 1;
             s.scache0_addr = val & ( (1LL << PA_BITS) - 1);
             fprintf(stderr, "enable scache access %lx %lx\n", s.scache0_addr, size);
 
-            memory_region_init_ram(&s.scache0_ram, NULL, "ls2h.scache", 
+            memory_region_init_ram(&s.scache0_ram, NULL, "lm1507.scache", 
                     size, &error_fatal);
 
             memory_region_add_subregion_overlap(get_system_memory(), 
@@ -278,7 +455,7 @@ static void creg_write(void *opaque, hwaddr addr, uint64_t val,
             memory_region_unref(&s.scache0_ram);
         }
 
-    } else if (addr == 0x84240) {
+    } else if (addr == 0x240) {
         s.scache0_mask = val;
     }
 }
@@ -287,12 +464,6 @@ static uint64_t creg_read(void *opaque, hwaddr addr, unsigned size)
 {
     uint64_t val = -1LL;
 
-    addr += LS2H_CHIP_CFG_REG_BASE;
-    switch (addr) {
-        case LS2H_GPIO_IN_REG: //board ver num
-            val = 0xf00LL;
-            break;
-    }
     DPRINTF("creg read addr %lx size %d val %lx\n", addr, size, val);
     return val;
 }
@@ -311,6 +482,7 @@ static const MemoryRegionOps creg_io_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
+#if 0
 /* GPU reg io */
 static void gpu_write(void *opaque, hwaddr addr, uint64_t val,
                                 unsigned int size)
@@ -322,7 +494,6 @@ static uint64_t gpu_read(void *opaque, hwaddr addr, unsigned size)
 {
     uint64_t val = -1LL;
 
-    addr += LS2H_GPU_REG_BASE;
     DPRINTF("gpu read addr %lx size %d val %lx\n", addr, size, val);
     return val;
 }
@@ -352,7 +523,6 @@ static uint64_t nand_read(void *opaque, hwaddr addr, unsigned size)
 {
     uint64_t val = -1LL;
 
-    addr += LS2H_NAND_REG_BASE;
     DPRINTF("nand read addr %lx size %d val %lx\n", addr, size, val);
     return val;
 }
@@ -370,10 +540,168 @@ static const MemoryRegionOps nand_io_ops = {
     },
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
+#endif
+
+/* ht controller config reg io */
+static uint64_t link_control = 0;
+static int64_t timer_count = 10;
+static void ht_ctlconf_write(void *opaque, hwaddr addr, uint64_t val,
+                                unsigned int size)
+{
+    DPRINTF("HT controller config write addr %lx with val %lx size %d\n", addr, val, size);
+    if (addr == 0x44) {
+        /* don't set crc error bits */
+        link_control = val & ~(0x300);
+    } 
+}
+
+static uint64_t ht_ctlconf_read(void *opaque, hwaddr addr, unsigned size)
+{
+    uint64_t val = -1LL;
+
+    if (addr == 0x44) {
+        val = link_control;
+        /* set init complete after each read to emulate system reset */
+        if (timer_count > 0) timer_count--;
+        if (timer_count == 0) 
+            link_control |= (1ULL<<5);
+    }
+    DPRINTF("HT controller config read addr %lx size %d val %lx\n", addr, size, val);
+    return val;
+}
+
+static const MemoryRegionOps ht_ctlconf_ops = {
+    .read = ht_ctlconf_read,
+    .write = ht_ctlconf_write,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+    },
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+    },
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
+/* ht controller config reg io */
+static void ht_io_write(void *opaque, hwaddr addr, uint64_t val,
+                                unsigned int size)
+{
+    DPRINTF("HT IO write addr %lx with val %lx size %d\n", addr, val, size);
+}
+
+static uint64_t ht_io_read(void *opaque, hwaddr addr, unsigned size)
+{
+    uint64_t val = -1LL;
+
+    DPRINTF("HT IO read addr %lx size %d val %lx\n", addr, size, val);
+    if (addr == 0xeee0) {
+        /* bit 0 is smbus busy bit, return 0 to avoid waiting */
+        return 0;
+    }
+    return val;
+}
+
+static const MemoryRegionOps ht_io_ops = {
+    .read = ht_io_read,
+    .write = ht_io_write,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+    },
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+    },
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
+/* ht memory space */
+static void ht_mem_write(void *opaque, hwaddr addr, uint64_t val,
+                                unsigned int size)
+{
+    DPRINTF("HT memory write addr %lx with val %lx size %d\n", addr, val, size);
+    if (addr == 0x10000) {
+        /* watchdog control, bios will use watchdog to reset system, 
+         * clear the init complete bit
+         */
+        if (val == 0x81) {
+            link_control &= ~(1ULL << 5);
+            timer_count = 10;
+        }
+    } 
+}
+
+static uint64_t ht_mem_read(void *opaque, hwaddr addr, unsigned size)
+{
+    uint64_t val = -1LL;
+
+    DPRINTF("HT memory read addr %lx size %d val %lx\n", addr, size, val);
+
+    /* south brdige PCIE_VC0_RESOURCE_STATUS, bit 1 is negotiation pending */
+    if (addr == (0x60000000 | (8 << 15) | 0x12a)) {
+            val = 0;
+    }
+    return val;
+}
+
+static const MemoryRegionOps ht_mem_ops = {
+    .read = ht_mem_read,
+    .write = ht_mem_write,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+    },
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+    },
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
+/* ht bus config reg io */
+static void ht_busconf_write(void *opaque, hwaddr addr, uint64_t val,
+                                unsigned int size)
+{
+    DPRINTF("HT bus config write addr %lx with val %lx size %d\n", addr, val, size);
+}
+
+static uint64_t ht_busconf_read(void *opaque, hwaddr addr, unsigned size)
+{
+    uint64_t val = -1LL;
+
+    DPRINTF("HT bus config read addr %lx size %d val %lx\n", addr, size, val);
+    /* link_error */
+    if (addr == 0x48) 
+        return 0x80250023;
+
+    /* 0:8:0 is south bridge, 0xe0 is NBPCIE_INDEX, its 0xa5 is PCIE_LC_STATE0, its bit 0-5 must be 0x10 */
+    if (addr == ((8<<11) | 0xe4)) {
+        return 0x10;
+    }
+    return val;
+}
+
+static const MemoryRegionOps ht_busconf_ops = {
+    .read = ht_busconf_read,
+    .write = ht_busconf_write,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+    },
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+    },
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
+#if 0
 
 /* sysbus LPC implementation */
-#define TYPE_LS2H_LPC "ls2h-lpc"
-#define LS2H_LPC(obj) OBJECT_CHECK(Ls2hLPCState, (obj), TYPE_LS2H_LPC)
+#define TYPE_LM1507_LPC "lm1507-lpc"
+#define LM1507_LPC(obj) OBJECT_CHECK(LM1507LPCState, (obj), TYPE_LM1507_LPC)
 
 typedef struct {
     SysBusDevice parent_obj;
@@ -386,9 +714,9 @@ typedef struct {
 
     /* cfg0: SIRQ en; cfg1: int_en; cfg2: int_src; cfg3: int_clr */
     uint32_t cfg[4];
-} Ls2hLPCState;
+} LM1507LPCState;
 
-static inline void ls2h_lpc_inth_update(Ls2hLPCState *s)
+static inline void lm1507_lpc_inth_update(LM1507LPCState *s)
 {
     if (s->cfg[1] & s->cfg[2]) {
         qemu_set_irq(s->parent_irq, 1);
@@ -397,9 +725,9 @@ static inline void ls2h_lpc_inth_update(Ls2hLPCState *s)
     }
 }
 
-static void ls2h_lpc_set_intr(void *opaque, int irq, int req)
+static void lm1507_lpc_set_intr(void *opaque, int irq, int req)
 {
-    Ls2hLPCState *s = LS2H_LPC(opaque);
+    LM1507LPCState *s = LM1507_LPC(opaque);
 
     int mask = 1 << irq;
 
@@ -409,30 +737,30 @@ static void ls2h_lpc_set_intr(void *opaque, int irq, int req)
         s->cfg[2] &= ~mask;
     }
 
-    ls2h_lpc_inth_update(s);
+    lm1507_lpc_inth_update(s);
 }
 
-static uint64_t ls2h_lpc_read(void *opaque, hwaddr addr,
+static uint64_t lm1507_lpc_read(void *opaque, hwaddr addr,
                                unsigned size)
 {
-    Ls2hLPCState *s = LS2H_LPC(opaque);
+    LM1507LPCState *s = LM1507_LPC(opaque);
     uint64_t value = s->cfg[(addr & 0xf) >> 2];
     return value;
 }
 
-static void ls2h_lpc_write(void *opaque, hwaddr addr,
+static void lm1507_lpc_write(void *opaque, hwaddr addr,
                             uint64_t value, unsigned size)
 {
-    Ls2hLPCState *s = LS2H_LPC(opaque);
+    LM1507LPCState *s = LM1507_LPC(opaque);
 
     s->cfg[(addr & 0xf) >> 2] = value;
 
-    ls2h_lpc_inth_update(s);
+    lm1507_lpc_inth_update(s);
 }
 
-static const MemoryRegionOps ls2h_lpc_mem_ops = {
-    .read = ls2h_lpc_read,
-    .write = ls2h_lpc_write,
+static const MemoryRegionOps lm1507_lpc_mem_ops = {
+    .read = lm1507_lpc_read,
+    .write = lm1507_lpc_write,
     .endianness = DEVICE_NATIVE_ENDIAN,
     .valid = {
         .min_access_size = 4,
@@ -440,57 +768,57 @@ static const MemoryRegionOps ls2h_lpc_mem_ops = {
     },
 };
 
-static void ls2h_lpc_reset(DeviceState *dev)
+static void lm1507_lpc_reset(DeviceState *dev)
 {
-    Ls2hLPCState *s = LS2H_LPC(dev);
+    LM1507LPCState *s = LM1507_LPC(dev);
     int i;
 
     for (i = 0; i < 4; i++)
         s->cfg[i] = 0;
 }
 
-static int ls2h_lpc_init(SysBusDevice *sbd)
+static int lm1507_lpc_init(SysBusDevice *sbd)
 {
     DeviceState *dev = DEVICE(sbd);
-    Ls2hLPCState *s = LS2H_LPC(dev);
+    LM1507LPCState *s = LM1507_LPC(dev);
 
     s->nirqs = 18;
     sysbus_init_irq(sbd, &s->parent_irq);
-    qdev_init_gpio_in(dev, ls2h_lpc_set_intr, s->nirqs);
-    memory_region_init_io(&s->mmio, OBJECT(s), &ls2h_lpc_mem_ops, s,
-                          "ls2h-lpc", 0x1000);
+    qdev_init_gpio_in(dev, lm1507_lpc_set_intr, s->nirqs);
+    memory_region_init_io(&s->mmio, OBJECT(s), &lm1507_lpc_mem_ops, s,
+                          "lm1507-lpc", 0x1000);
     sysbus_init_mmio(sbd, &s->mmio);
 
     return 0;
 }
 
-static Property ls2h_lpc_properties[] = {
+static Property lm1507_lpc_properties[] = {
     DEFINE_PROP_END_OF_LIST(),
 };
 
-static void ls2h_lpc_class_init(ObjectClass *klass, void *data)
+static void lm1507_lpc_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
 
-    k->init = ls2h_lpc_init;
-    dc->reset = ls2h_lpc_reset;
-    dc->props = ls2h_lpc_properties;
+    k->init = lm1507_lpc_init;
+    dc->reset = lm1507_lpc_reset;
+    dc->props = lm1507_lpc_properties;
 }
 
-static const TypeInfo ls2h_lpc_info = {
-    .name          = "ls2h-lpc",
+static const TypeInfo lm1507_lpc_info = {
+    .name          = "lm1507-lpc",
     .parent        = TYPE_SYS_BUS_DEVICE,
-    .class_init    = ls2h_lpc_class_init,
-    .instance_size = sizeof(Ls2hLPCState),
+    .class_init    = lm1507_lpc_class_init,
+    .instance_size = sizeof(LM1507LPCState),
 };
 
 /** I2C slave implementations **/
 typedef enum i2c_state { I2C_STOP, I2C_SEND, I2C_RECV } i2c_state_t;
 
 /* I2C slave implementation of memory SPD eeprom */
-#define TYPE_LS2H_SPD "ls2h-spd"
-#define LS2H_SPD(obj) OBJECT_CHECK(Ls2hSPDState, (obj), TYPE_LS2H_SPD)
+#define TYPE_LM1507_SPD "lm1507-spd"
+#define LM1507_SPD(obj) OBJECT_CHECK(LM1507SPDState, (obj), TYPE_LM1507_SPD)
 
 /* byte 3 == 0x2, udimm
    byte 4 == 0x2, 1Gb chip, 8 banks 
@@ -525,11 +853,11 @@ typedef struct {
     uint8_t offset;
 
     const uint8_t *eeprom;
-} Ls2hSPDState;
+} LM1507SPDState;
 
-static int ls2h_spd_send(I2CSlave *i2c, uint8_t data)
+static int lm1507_spd_send(I2CSlave *i2c, uint8_t data)
 {
-    Ls2hSPDState *s = LS2H_SPD(i2c);
+    LM1507SPDState *s = LM1507_SPD(i2c);
     if (s->state == I2C_SEND) 
         s->offset = data;
     else
@@ -537,9 +865,9 @@ static int ls2h_spd_send(I2CSlave *i2c, uint8_t data)
     return 0;
 }
 
-static void ls2h_spd_event(I2CSlave *i2c, enum i2c_event event)
+static void lm1507_spd_event(I2CSlave *i2c, enum i2c_event event)
 {
-    Ls2hSPDState *s = LS2H_SPD(i2c);
+    LM1507SPDState *s = LM1507_SPD(i2c);
     switch (event) {
         case I2C_START_SEND:
             s->state = I2C_SEND;
@@ -556,10 +884,10 @@ static void ls2h_spd_event(I2CSlave *i2c, enum i2c_event event)
     }
 }
 
-static int ls2h_spd_recv(I2CSlave *i2c)
+static int lm1507_spd_recv(I2CSlave *i2c)
 {
     int ret;
-    Ls2hSPDState *s = LS2H_SPD(i2c);
+    LM1507SPDState *s = LM1507_SPD(i2c);
 
     if (s->state != I2C_RECV) {
         fprintf(stderr, "i2c receive in wrong state %d\n", s->state);
@@ -570,9 +898,9 @@ static int ls2h_spd_recv(I2CSlave *i2c)
     return ret;
 }
 
-static int ls2h_spd_init(I2CSlave *i2c)
+static int lm1507_spd_init(I2CSlave *i2c)
 {
-    Ls2hSPDState *s = LS2H_SPD(i2c);
+    LM1507SPDState *s = LM1507_SPD(i2c);
 
     s->offset = 0;
     s->state = I2C_STOP;
@@ -580,26 +908,26 @@ static int ls2h_spd_init(I2CSlave *i2c)
     return 0;
 }
 
-static void ls2h_spd_class_init(ObjectClass *klass, void *data)
+static void lm1507_spd_class_init(ObjectClass *klass, void *data)
 {
     I2CSlaveClass *k = I2C_SLAVE_CLASS(klass);
 
-    k->init = ls2h_spd_init;
-    k->event = ls2h_spd_event;
-    k->recv = ls2h_spd_recv;
-    k->send = ls2h_spd_send;
+    k->init = lm1507_spd_init;
+    k->event = lm1507_spd_event;
+    k->recv = lm1507_spd_recv;
+    k->send = lm1507_spd_send;
 }
 
-static const TypeInfo ls2h_spd_info = {
-    .name          = TYPE_LS2H_SPD,
+static const TypeInfo lm1507_spd_info = {
+    .name          = TYPE_LM1507_SPD,
     .parent        = TYPE_I2C_SLAVE,
-    .instance_size = sizeof(Ls2hSPDState),
-    .class_init    = ls2h_spd_class_init,
+    .instance_size = sizeof(LM1507SPDState),
+    .class_init    = lm1507_spd_class_init,
 };
 
 /* I2C slave implementation for gmac eeprom */
-#define TYPE_LS2H_MACROM "ls2h-macrom"
-#define LS2H_MACROM(obj) OBJECT_CHECK(Ls2hMacromState, (obj),TYPE_LS2H_MACROM)
+#define TYPE_LM1507_MACROM "lm1507-macrom"
+#define LM1507_MACROM(obj) OBJECT_CHECK(LM1507MacromState, (obj),TYPE_LM1507_MACROM)
 
 /* mac0/mac1 eeprom, only the first 12 bytes emulated */
 static const unsigned char eeprom_mac[] = 
@@ -613,11 +941,11 @@ typedef struct {
     int len;
 
     const uint8_t *eeprom;
-} Ls2hMacromState;
+} LM1507MacromState;
 
-static int ls2h_macrom_send(I2CSlave *i2c, uint8_t data)
+static int lm1507_macrom_send(I2CSlave *i2c, uint8_t data)
 {
-    Ls2hMacromState *s = LS2H_MACROM(i2c);
+    LM1507MacromState *s = LM1507_MACROM(i2c);
     if (s->state == I2C_SEND) { 
         if (s->len == 0) {
             s->offset = data << 8;
@@ -634,9 +962,9 @@ static int ls2h_macrom_send(I2CSlave *i2c, uint8_t data)
     return 0;
 }
 
-static void ls2h_macrom_event(I2CSlave *i2c, enum i2c_event event)
+static void lm1507_macrom_event(I2CSlave *i2c, enum i2c_event event)
 {
-    Ls2hMacromState *s = LS2H_MACROM(i2c);
+    LM1507MacromState *s = LM1507_MACROM(i2c);
     switch (event) {
         case I2C_START_SEND:
             s->state = I2C_SEND;
@@ -654,10 +982,10 @@ static void ls2h_macrom_event(I2CSlave *i2c, enum i2c_event event)
     }
 }
 
-static int ls2h_macrom_recv(I2CSlave *i2c)
+static int lm1507_macrom_recv(I2CSlave *i2c)
 {
     int ret;
-    Ls2hMacromState *s = LS2H_MACROM(i2c);
+    LM1507MacromState *s = LM1507_MACROM(i2c);
 
     if (s->state != I2C_RECV) {
         fprintf(stderr, "i2c receive in wrong state %d\n", s->state);
@@ -671,9 +999,9 @@ static int ls2h_macrom_recv(I2CSlave *i2c)
     return ret;
 }
 
-static int ls2h_macrom_init(I2CSlave *i2c)
+static int lm1507_macrom_init(I2CSlave *i2c)
 {
-    Ls2hMacromState *s = LS2H_MACROM(i2c);
+    LM1507MacromState *s = LM1507_MACROM(i2c);
 
     s->offset = 0;
     s->state = I2C_STOP;
@@ -683,26 +1011,26 @@ static int ls2h_macrom_init(I2CSlave *i2c)
     return 0;
 }
 
-static void ls2h_macrom_class_init(ObjectClass *klass, void *data)
+static void lm1507_macrom_class_init(ObjectClass *klass, void *data)
 {
     I2CSlaveClass *k = I2C_SLAVE_CLASS(klass);
 
-    k->init = ls2h_macrom_init;
-    k->event = ls2h_macrom_event;
-    k->recv = ls2h_macrom_recv;
-    k->send = ls2h_macrom_send;
+    k->init = lm1507_macrom_init;
+    k->event = lm1507_macrom_event;
+    k->recv = lm1507_macrom_recv;
+    k->send = lm1507_macrom_send;
 }
 
-static const TypeInfo ls2h_macrom_info = {
-    .name          = TYPE_LS2H_MACROM,
+static const TypeInfo lm1507_macrom_info = {
+    .name          = TYPE_LM1507_MACROM,
     .parent        = TYPE_I2C_SLAVE,
-    .instance_size = sizeof(Ls2hMacromState),
-    .class_init    = ls2h_macrom_class_init,
+    .instance_size = sizeof(LM1507MacromState),
+    .class_init    = lm1507_macrom_class_init,
 };
 
 /* I2C slave implementation for EDID data */
-#define TYPE_LS2H_EDIDROM "ls2h-edidrom"
-#define LS2H_EDIDROM(obj) OBJECT_CHECK(Ls2hEDIDromState, (obj),TYPE_LS2H_EDIDROM)
+#define TYPE_LM1507_EDIDROM "lm1507-edidrom"
+#define LM1507_EDIDROM(obj) OBJECT_CHECK(LM1507EDIDromState, (obj),TYPE_LM1507_EDIDROM)
 
 /* 800x600 EDID, see Documentation/EDID/ in kernel tree for more information */
 static const unsigned char eeprom_edid[] = { 
@@ -724,11 +1052,11 @@ typedef struct {
     int len;
 
     const uint8_t *eeprom;
-} Ls2hEDIDromState;
+} LM1507EDIDromState;
 
-static int ls2h_edidrom_send(I2CSlave *i2c, uint8_t data)
+static int lm1507_edidrom_send(I2CSlave *i2c, uint8_t data)
 {
-    Ls2hEDIDromState *s = LS2H_EDIDROM(i2c);
+    LM1507EDIDromState *s = LM1507_EDIDROM(i2c);
     if (s->state == I2C_SEND) { 
         if (s->len == 0) {
             s->offset = data << 8;
@@ -745,9 +1073,9 @@ static int ls2h_edidrom_send(I2CSlave *i2c, uint8_t data)
     return 0;
 }
 
-static void ls2h_edidrom_event(I2CSlave *i2c, enum i2c_event event)
+static void lm1507_edidrom_event(I2CSlave *i2c, enum i2c_event event)
 {
-    Ls2hEDIDromState *s = LS2H_EDIDROM(i2c);
+    LM1507EDIDromState *s = LM1507_EDIDROM(i2c);
     switch (event) {
         case I2C_START_SEND:
             s->state = I2C_SEND;
@@ -765,10 +1093,10 @@ static void ls2h_edidrom_event(I2CSlave *i2c, enum i2c_event event)
     }
 }
 
-static int ls2h_edidrom_recv(I2CSlave *i2c)
+static int lm1507_edidrom_recv(I2CSlave *i2c)
 {
     int ret;
-    Ls2hEDIDromState *s = LS2H_EDIDROM(i2c);
+    LM1507EDIDromState *s = LM1507_EDIDROM(i2c);
 
     if (s->state != I2C_RECV) {
         fprintf(stderr, "i2c receive in wrong state %d\n", s->state);
@@ -782,9 +1110,9 @@ static int ls2h_edidrom_recv(I2CSlave *i2c)
     return ret;
 }
 
-static int ls2h_edidrom_init(I2CSlave *i2c)
+static int lm1507_edidrom_init(I2CSlave *i2c)
 {
-    Ls2hEDIDromState *s = LS2H_EDIDROM(i2c);
+    LM1507EDIDromState *s = LM1507_EDIDROM(i2c);
 
     s->offset = 0;
     s->state = I2C_STOP;
@@ -794,21 +1122,21 @@ static int ls2h_edidrom_init(I2CSlave *i2c)
     return 0;
 }
 
-static void ls2h_edidrom_class_init(ObjectClass *klass, void *data)
+static void lm1507_edidrom_class_init(ObjectClass *klass, void *data)
 {
     I2CSlaveClass *k = I2C_SLAVE_CLASS(klass);
 
-    k->init = ls2h_edidrom_init;
-    k->event = ls2h_edidrom_event;
-    k->recv = ls2h_edidrom_recv;
-    k->send = ls2h_edidrom_send;
+    k->init = lm1507_edidrom_init;
+    k->event = lm1507_edidrom_event;
+    k->recv = lm1507_edidrom_recv;
+    k->send = lm1507_edidrom_send;
 }
 
-static const TypeInfo ls2h_edidrom_info = {
-    .name          = TYPE_LS2H_EDIDROM,
+static const TypeInfo lm1507_edidrom_info = {
+    .name          = TYPE_LM1507_EDIDROM,
     .parent        = TYPE_I2C_SLAVE,
-    .instance_size = sizeof(Ls2hEDIDromState),
-    .class_init    = ls2h_edidrom_class_init,
+    .instance_size = sizeof(LM1507EDIDromState),
+    .class_init    = lm1507_edidrom_class_init,
 };
 
 /* acpi */
@@ -816,19 +1144,21 @@ static void acpi_write(void *opaque, hwaddr addr, uint64_t val,
                                 unsigned int size)
 {
     DPRINTF("acpi write addr %lx with val %lx size %d\n", addr, val, size);
-    addr += LS2H_ACPI_REG_BASE;
+#if 0
+    addr += LM1507_ACPI_REG_BASE;
     switch (addr) {
-        case LS2H_PM1_STS_REG:
+        case LM1507_PM1_STS_REG:
             break;
-        case LS2H_PM1_CNT_REG:
+        case LM1507_PM1_CNT_REG:
             if (val == 0x3c00)
                 qemu_system_shutdown_request();
             break;
-        case LS2H_RST_CNT_REG:
+        case LM1507_RST_CNT_REG:
             if (val & 1)
                 qemu_system_reset_request();
             break;
     }
+#endif
 }
 
 static uint64_t acpi_read(void *opaque, hwaddr addr, unsigned size)
@@ -837,7 +1167,7 @@ static uint64_t acpi_read(void *opaque, hwaddr addr, unsigned size)
     return 0;
 }
 
-static const MemoryRegionOps acpi_io_ops = {
+static MemoryRegionOps acpi_io_ops = {
     .read = acpi_read,
     .write = acpi_write,
     .impl = {
@@ -848,8 +1178,8 @@ static const MemoryRegionOps acpi_io_ops = {
 };
 
 /* sysbus RTC implementation */
-#define TYPE_LS2H_RTC "ls2h-rtc"
-#define LS2H_RTC(obj) OBJECT_CHECK(Ls2hRTCState, (obj), TYPE_LS2H_RTC)
+#define TYPE_LM1507_RTC "lm1507-rtc"
+#define LM1507_RTC(obj) OBJECT_CHECK(LM1507RTCState, (obj), TYPE_LM1507_RTC)
 
 typedef struct {
     SysBusDevice parent_obj;
@@ -860,51 +1190,51 @@ typedef struct {
 
     uint32_t toy_trim, toy_lo, toy_hi, toy_match0, toy_match1, toy_match2;
     uint32_t rtc_trim, rtc_count, rtc_match0, rtc_match1, rtc_match2, rtc_ctrl;
-} Ls2hRTCState;
+} LM1507RTCState;
 
 /* todo: interrupt */
 static void rtc_write(void *opaque, hwaddr addr, uint64_t val,
                                 unsigned int size)
 {
-    Ls2hRTCState *s = LS2H_RTC(opaque);
+    LM1507RTCState *s = LM1507_RTC(opaque);
 
-    uint64_t vaddr = addr + LS2H_RTC_REG_BASE;
+    uint64_t vaddr = addr + LM1507_RTC_REG_BASE;
     DPRINTF("rtc write addr %lx with val %lx size %d\n", addr, val, size);
     switch (vaddr) {
-        case LS2H_TOY_TRIM_REG:
+        case LM1507_TOY_TRIM_REG:
             s->toy_trim = (uint32_t) val;
             break;
-        case LS2H_TOY_WRITE0_REG:
+        case LM1507_TOY_WRITE0_REG:
             s->toy_lo = (uint32_t) val;
             break;
-        case LS2H_TOY_WRITE1_REG:
+        case LM1507_TOY_WRITE1_REG:
             s->toy_hi = (uint32_t) val;
             break;
-        case LS2H_TOY_MATCH0_REG:
+        case LM1507_TOY_MATCH0_REG:
             s->toy_match0 = (uint32_t) val;
             break;
-        case LS2H_TOY_MATCH1_REG:
+        case LM1507_TOY_MATCH1_REG:
             s->toy_match1 = (uint32_t) val;
             break;
-        case LS2H_TOY_MATCH2_REG:
+        case LM1507_TOY_MATCH2_REG:
             s->toy_match2 = (uint32_t) val;
             break;
-        case LS2H_RTC_CTRL_REG:
+        case LM1507_RTC_CTRL_REG:
             s->rtc_ctrl = (uint32_t) val;
             break;
-        case LS2H_RTC_TRIM_REG:
+        case LM1507_RTC_TRIM_REG:
             s->rtc_trim = (uint32_t) val;
             break;
-        case LS2H_RTC_WRITE0_REG:
+        case LM1507_RTC_WRITE0_REG:
             s->rtc_count = (uint32_t) val;
             break;
-        case LS2H_RTC_MATCH0_REG:
+        case LM1507_RTC_MATCH0_REG:
             s->rtc_match0 = (uint32_t) val;
             break;
-        case LS2H_RTC_MATCH1_REG:
+        case LM1507_RTC_MATCH1_REG:
             s->rtc_match1 = (uint32_t) val;
             break;
-        case LS2H_RTC_MATCH2_REG:
+        case LM1507_RTC_MATCH2_REG:
             s->rtc_match2 = (uint32_t) val;
             break;
         default:
@@ -914,18 +1244,18 @@ static void rtc_write(void *opaque, hwaddr addr, uint64_t val,
 
 static uint64_t rtc_read(void *opaque, hwaddr addr, unsigned size)
 {
-    Ls2hRTCState *s = LS2H_RTC(opaque);
-    uint64_t vaddr = addr + LS2H_RTC_REG_BASE;
+    LM1507RTCState *s = LM1507_RTC(opaque);
+    uint64_t vaddr = addr + LM1507_RTC_REG_BASE;
     uint64_t val = -1;
     struct tm tm;
 
     qemu_get_timedate(&tm, 0);
 
     switch (vaddr) {
-        case LS2H_TOY_TRIM_REG:
+        case LM1507_TOY_TRIM_REG:
             val = s->toy_trim; 
             break;
-        case LS2H_TOY_READ0_REG:
+        case LM1507_TOY_READ0_REG:
             val = ( (((tm.tm_mon + 1) & 0x3f) << 26) |
                     ((tm.tm_mday & 0x1f) << 21) |
                     ((tm.tm_hour & 0x1f) << 16) |
@@ -933,32 +1263,32 @@ static uint64_t rtc_read(void *opaque, hwaddr addr, unsigned size)
                     ((tm.tm_sec & 0x3f) << 4) ); 
             DPRINTF("mon %d day %d\n", tm.tm_mon, tm.tm_mday);
             break;
-        case LS2H_TOY_READ1_REG:
+        case LM1507_TOY_READ1_REG:
             val = tm.tm_year;
             DPRINTF("year %d\n", tm.tm_year);
             break;
-        case LS2H_TOY_MATCH0_REG:
+        case LM1507_TOY_MATCH0_REG:
             val = s->toy_match0;
             break;
-        case LS2H_TOY_MATCH1_REG:
+        case LM1507_TOY_MATCH1_REG:
             val = s->toy_match1;
             break;
-        case LS2H_TOY_MATCH2_REG:
+        case LM1507_TOY_MATCH2_REG:
             val = s->toy_match2;
             break;
-        case LS2H_RTC_TRIM_REG:
+        case LM1507_RTC_TRIM_REG:
             val = s->rtc_trim;
             break;
-        case LS2H_RTC_READ0_REG:
+        case LM1507_RTC_READ0_REG:
             val = s->rtc_count;
             break;
-        case LS2H_RTC_MATCH0_REG:
+        case LM1507_RTC_MATCH0_REG:
             val = s->rtc_match0;
             break;
-        case LS2H_RTC_MATCH1_REG:
+        case LM1507_RTC_MATCH1_REG:
             val = s->rtc_match1;
             break;
-        case LS2H_RTC_MATCH2_REG:
+        case LM1507_RTC_MATCH2_REG:
             val = s->rtc_match2;
             break;
         default:
@@ -969,7 +1299,7 @@ static uint64_t rtc_read(void *opaque, hwaddr addr, unsigned size)
     return val;
 }
 
-static const MemoryRegionOps ls2h_rtc_ops = {
+static MemoryRegionOps lm1507_rtc_ops = {
     .read = rtc_read,
     .write = rtc_write,
     .impl = {
@@ -979,50 +1309,50 @@ static const MemoryRegionOps ls2h_rtc_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
-static void ls2h_rtc_reset(DeviceState *dev)
+static void lm1507_rtc_reset(DeviceState *dev)
 {
-    //Ls2hRTCState *s = LS2H_RTC(dev);
+    //LM1507RTCState *s = LM1507_RTC(dev);
 }
 
-static int ls2h_rtc_init(SysBusDevice *sbd)
+static int lm1507_rtc_init(SysBusDevice *sbd)
 {
     DeviceState *dev = DEVICE(sbd);
-    Ls2hRTCState *s = LS2H_RTC(dev);
+    LM1507RTCState *s = LM1507_RTC(dev);
     int i;
 
     for (i = 0; i < 8; i++)
         sysbus_init_irq(sbd, &s->irq[i]);
-    memory_region_init_io(&s->io, OBJECT(s), &ls2h_rtc_ops, s,
-                          "ls2h-rtc", 0x8000);
+    memory_region_init_io(&s->io, OBJECT(s), &lm1507_rtc_ops, s,
+                          "lm1507-rtc", 0x8000);
     sysbus_init_mmio(sbd, &s->io);
 
     return 0;
 }
 
-static Property ls2h_rtc_properties[] = {
+static Property lm1507_rtc_properties[] = {
     DEFINE_PROP_END_OF_LIST(),
 };
 
-static void ls2h_rtc_class_init(ObjectClass *klass, void *data)
+static void lm1507_rtc_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
 
-    k->init = ls2h_rtc_init;
-    dc->reset = ls2h_rtc_reset;
-    dc->props = ls2h_rtc_properties;
+    k->init = lm1507_rtc_init;
+    dc->reset = lm1507_rtc_reset;
+    dc->props = lm1507_rtc_properties;
 }
 
-static const TypeInfo ls2h_rtc_info = {
-    .name          = "ls2h-rtc",
+static TypeInfo lm1507_rtc_info = {
+    .name          = "lm1507-rtc",
     .parent        = TYPE_SYS_BUS_DEVICE,
-    .class_init    = ls2h_rtc_class_init,
-    .instance_size = sizeof(Ls2hRTCState),
+    .class_init    = lm1507_rtc_class_init,
+    .instance_size = sizeof(LM1507RTCState),
 };
+#endif
 
 /* machine init entrance */
-static const int sector_len = 64 * 1024;
-static void mips_ls2h_init(MachineState *machine)
+static void mips_lm1507_init(MachineState *machine)
 {
     ram_addr_t ram_size = machine->ram_size;
     const char *cpu_model = machine->cpu_model;
@@ -1035,25 +1365,47 @@ static void mips_ls2h_init(MachineState *machine)
     DriveInfo *dinfo;
     int64_t kernel_entry;
     CPUMIPSState *env;
-    I2CBus *i2cbus;
-    ISABus *isabus;
+    MIPSCPU *cpu;
+    //I2CBus *i2cbus;
+    //ISABus *isabus;
     DeviceState *dev;
-    MemoryRegion *mr;
+    //MemoryRegion *mr;
     qemu_irq irq;
     int i;
 
     /* init CPUs */
     if (cpu_model == NULL) {
-        cpu_model = "Loongson-2H";
+        cpu_model = "Loongson-3A2000";
     }
-    s.cpu = cpu_mips_init(cpu_model);
-    if (s.cpu == NULL) {
-        fprintf(stderr, "Unable to find CPU definition\n");
-        exit(1);
-    }
-    env = &(s.cpu->env);
 
-    qemu_register_reset(main_cpu_reset, s.cpu);
+    memory_region_init_io(&s.gipi_io, NULL, &gipi_ops, (void *)&s.gipis, "gipi", 0x1000);
+
+    for(i = 0; i < smp_cpus; i++) {
+        printf("==== init smp_cpus=%d ====\n", i);
+        cpu = cpu_mips_init(cpu_model);
+        if (cpu == NULL) {
+            fprintf(stderr, "Unable to find CPU definition\n");
+            exit(1);
+        }
+
+        env = &cpu->env;
+        s.mycpu[i] = env;
+
+        env->CP0_EBase |= i;
+
+        qemu_register_reset(main_cpu_reset, cpu);
+
+        /* Init CPU internal devices */
+        cpu_mips_irq_init_cpu(env);
+        cpu_mips_clock_init(env);
+
+        s.gipis.core[i].irq = env->irq[6];
+
+        if (i == 0) 
+            memory_region_add_subregion_overlap(get_system_memory(), 
+                    0x3ff01000, &s.gipi_io, 1);
+    }
+    env = s.mycpu[0];
 
     /* hard coded now, TODO */
     ram_size = 1024 * 1024 * 1024;
@@ -1064,35 +1416,39 @@ static void mips_ls2h_init(MachineState *machine)
        Mem controller's address space is overlapped with memory
     */
     s.memory_initialized = 0;
-    memory_region_allocate_system_memory(&s.ram, NULL, "ls2h.ram",
+    memory_region_allocate_system_memory(&s.ram, NULL, "lm1507.ram",
             s.ram_size);
     memory_region_add_subregion(get_system_memory(), 0, &s.ram);
 
-    /* memory above 256M mapped to 0x110000000 */
-    memory_region_init_alias(&s.ram_hi, NULL, "ls2h.ram_hi", 
+    /* memory above 256M mapped to 0x400000000 */
+    memory_region_init_alias(&s.ram_hi, NULL, "lm1507.ram_hi", 
             &s.ram, 0x10000000, s.ram_size - 0x10000000);
-    memory_region_add_subregion(get_system_memory(), 0x110000000ULL, 
+    memory_region_add_subregion(get_system_memory(), 0x400000000ULL, 
             &s.ram_hi);
-    memory_region_init_alias(&s.ram_hi2, NULL, "ls2h.ram_hi2", 
+    /* ??? to check */
+    memory_region_init_alias(&s.ram_hi2, NULL, "lm1507.ram_hi2", 
             &s.ram, 0, s.ram_size);
     memory_region_add_subregion_overlap(get_system_memory(), 0x1000000000ULL, 
             &s.ram_hi2, 0);
 
-    memory_region_init_io(&s.mc_io, NULL, &mc_io_ops, &s, 
-                          "memory controller I/O", 0x1000);
-    /* this doesn't belongs to system_io */
-    memory_region_init_alias(&s.mc_mem, NULL, "memory controller I/O mem",
-                             &s.mc_io, 0, 0x1000);
+    memory_region_init_io(&s.mc0_io, NULL, &mc0_io_ops, &s, 
+                          "memory controller0 I/O", 0x1000);
     memory_region_add_subregion_overlap(get_system_memory(), 
-                                LS2H_MC_REG_BASE - KSEG0_BASE, 
-                                &s.mc_mem, 1);
+                                LM1507_MC0_REG_BASE - KSEG0_BASE, 
+                                &s.mc0_io, 1);
+
+    memory_region_init_io(&s.mc1_io, NULL, &mc1_io_ops, &s, 
+                          "memory controller1 I/O", 0x1000);
+    memory_region_add_subregion_overlap(get_system_memory(), 
+                                LM1507_MC1_REG_BASE - KSEG0_BASE, 
+                                &s.mc1_io, 1);
 
     /* Try to load a BIOS image. If this fails, we continue regardless,
        but initialize the hardware ourselves. When a kernel gets
        preloaded we also initialize the hardware, since the BIOS wasn't
        run. */
     if (bios_name == NULL)
-        bios_name = LS2H_BIOSNAME;
+        bios_name = LM1507_BIOSNAME;
     filename = qemu_find_file(QEMU_FILE_TYPE_BIOS, bios_name);
     if (filename) {
         bios_size = get_image_size(filename);
@@ -1100,13 +1456,13 @@ static void mips_ls2h_init(MachineState *machine)
         bios_size = -1;
     }
     if (bios_size != -1) {
-        memory_region_init_ram(&s.bios, NULL, "ls2h.bios", bios_size,
+        memory_region_init_ram(&s.flash, NULL, "lm1507.flash", bios_size,
                 &error_fatal);
-        vmstate_register_ram_global(&s.bios);
-        memory_region_set_readonly(&s.bios, true);
+        vmstate_register_ram_global(&s.flash);
+        memory_region_set_readonly(&s.flash, true);
 
-        memory_region_add_subregion(address_space_mem, 0x1fc00000LL, &s.bios);
-        load_image_targphys(filename, 0x1fc00000, bios_size);
+        memory_region_add_subregion(address_space_mem, 0x1c000000LL, &s.flash);
+        load_image_targphys(filename, 0x1c000000, bios_size);
     } else if ((dinfo = drive_get(IF_PFLASH, 0, 0)) != NULL) {
         /* spi rom */
 #if 1
@@ -1116,14 +1472,15 @@ static void mips_ls2h_init(MachineState *machine)
         s.spidev = qdev_create(NULL, "ls2h-spi");
         qdev_init_nofail(s.spidev);
         busdev = SYS_BUS_DEVICE(s.spidev);
-        sysbus_mmio_map(busdev, 0, LS2H_SPI_REG_BASE - KSEG0_BASE);
-        sysbus_mmio_map(busdev, 1, 0xbfc00000 - KSEG0_BASE);
+        sysbus_mmio_map(busdev, 0, LM1507_SPI_REG_BASE - KSEG0_BASE);
+        sysbus_mmio_map(busdev, 1, 0xbc000000 - KSEG0_BASE);
         /* delay it till interrupt controller inited */
         //sysbus_connect_irq(busdev, 0, irq[SPI_IRQ]);
 
         spi = (SSIBus *)qdev_get_child_bus(s.spidev, "spi");
 
-        dev = ssi_create_slave(spi, "sst25vf080b");
+        /* 2MB flash */
+        dev = ssi_create_slave(spi, "sst25vf016b");
         irq = qdev_get_gpio_in_named(dev, SSI_GPIO_CS, 0);
         sysbus_connect_irq(busdev, 1, irq);
 
@@ -1133,7 +1490,7 @@ static void mips_ls2h_init(MachineState *machine)
 #else
         /* if bios is connected via LPC flash, use this */
         uint32_t mips_rom = 0x00100000;
-        if (!pflash_cfi01_register(0x1fc00000, NULL, "ls2h.bios", mips_rom,
+        if (!pflash_cfi01_register(0x1c000000, NULL, "lm1507.flash", mips_rom,
                                    blk_by_legacy_dinfo(dinfo),
                                    sector_len, mips_rom / sector_len,
                                    4, 0, 0, 0, 0, 0)) {
@@ -1146,6 +1503,14 @@ static void mips_ls2h_init(MachineState *machine)
 		bios_name);
     }
 
+    /* map [bc000000,bc100000) to [bfc00000, bfd00000)
+     * we have only 1MB here due to architecture limit
+     */
+    memory_region_init_alias(&s.bios, NULL, "lm1507.bios", 
+            get_system_memory(), 0x1c000000, 0x100000);
+    memory_region_add_subregion(get_system_memory(), 0x1fc00000ULL, 
+            &s.bios);
+
     if (kernel_filename) {
         loaderparams.ram_size = ram_size;
         loaderparams.kernel_filename = kernel_filename;
@@ -1155,164 +1520,157 @@ static void mips_ls2h_init(MachineState *machine)
         write_bootloader(env, memory_region_get_ram_ptr(&s.bios), kernel_entry);
     }
 
-    /* Init internal devices */
-    cpu_mips_irq_init_cpu(env);
-    cpu_mips_clock_init(env);
-
-    /* Interrupt controller */
-    /* must end with a NULL; we take care of msr too 
-     */
-    s.intc_dev = sysbus_create_varargs("ls2h-intc", LS2H_MSI_PORT_REG - 
-            KSEG0_BASE, env->irq[2], env->irq[3], env->irq[4], 
-            env->irq[5], env->irq[6], NULL);
-    /* set higher priority then general chip reg io */
-    mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(s.intc_dev), 0);
-    mr->may_overlap = true;
-    mr->priority = 1;
-
+#if 0
     /* set ssi irq */
     irq = qdev_get_gpio_in(s.intc_dev, 6);
     sysbus_connect_irq(SYS_BUS_DEVICE(s.spidev), 0, irq);
+#endif
 
     /* init other devices */
     //DMA_init(0);
 
-    /* enlarge the default system IO size to include 
-      [0x1f000000,0x1fffffff] */
-    memory_region_set_size(get_system_io(), 0x1000000);
-
     /* SERIAL IO */
-    memory_region_init_alias(&s.uart0_mem, NULL, "uart0_mmio",
-                             get_system_io(),
-                             LS2H_UART0_REG_BASE - LS2H_IO_REG_BASE,
-                             0x00001000);
-    memory_region_add_subregion(get_system_memory(), 
-                                LS2H_UART0_REG_BASE - KSEG0_BASE, 
-                                &s.uart0_mem);
     if (serial_hds[0]) {
-        irq = qdev_get_gpio_in(s.intc_dev, 2);
-        serial_init(LS2H_UART0_REG_BASE - LS2H_IO_REG_BASE, irq, 
-                    115200, serial_hds[0], get_system_io());
+        qemu_irq *pirq;
+
+        pirq = qemu_allocate_irqs(ls3a_serial_set_irq, &s, 1);
+
+        serial_mm_init(get_system_memory(), LM1507_UART0_REG_BASE - KSEG0_BASE, 0,
+                pirq[0], 115200, serial_hds[0], DEVICE_NATIVE_ENDIAN);
     }
 
-    /* uart1 */
-    memory_region_init_alias(&s.uart1_mem, NULL, "uart1_mmio",
-                             get_system_io(),
-                             LS2H_UART1_REG_BASE - LS2H_IO_REG_BASE,
-                             0x00001000);
+    /* misc on chip IO 
+     *   bfe00000-bfe00100: PCI/PCI-X conf
+     *   bfe00100-bfe001e0: chip_config/chip_sample etc.
+     */
+    memory_region_init_io(&s.misc_io, NULL, &misc_io_ops, (void*)&s, 
+                          "chip config io", 0x1e0);
     memory_region_add_subregion(get_system_memory(), 
-                                LS2H_UART1_REG_BASE - KSEG0_BASE, 
-                                &s.uart1_mem);
-    if (serial_hds[1]) {
-        irq = qdev_get_gpio_in(s.intc_dev, 3);
-        serial_init(LS2H_UART1_REG_BASE - LS2H_IO_REG_BASE, irq, 
-                    115200, serial_hds[1], get_system_io());
-    }
+                                LM1507_MISC_IO_REG_BASE - KSEG0_BASE, 
+                                &s.misc_io);
 
-    /* uart2 */
-    memory_region_init_alias(&s.uart2_mem, NULL, "uart2_mmio",
-                             get_system_io(),
-                             LS2H_UART2_REG_BASE - LS2H_IO_REG_BASE,
-                             0x00001000);
-    memory_region_add_subregion(get_system_memory(), 
-                                LS2H_UART2_REG_BASE - KSEG0_BASE, 
-                                &s.uart2_mem);
-    if (serial_hds[2]) {
-        irq = qdev_get_gpio_in(s.intc_dev, 4);
-        serial_init(LS2H_UART2_REG_BASE - LS2H_IO_REG_BASE, irq, 
-                    115200, serial_hds[2], get_system_io());
-    }
-
-    /* uart3 */
-    memory_region_init_alias(&s.uart3_mem, NULL, "uart3_mmio",
-                             get_system_io(),
-                             LS2H_UART3_REG_BASE - LS2H_IO_REG_BASE,
-                             0x00001000);
-    memory_region_add_subregion(get_system_memory(), 
-                                LS2H_UART3_REG_BASE - KSEG0_BASE, 
-                                &s.uart3_mem);
-    if (serial_hds[3]) {
-        irq = qdev_get_gpio_in(s.intc_dev, 5);
-        serial_init(LS2H_UART3_REG_BASE - LS2H_IO_REG_BASE, irq, 
-                    115200, serial_hds[3], get_system_io());
-    }
-
-    /* Chip config IO */
-    memory_region_init_alias(&s.creg_mem, NULL, "chip config io mem",
-                             get_system_io(), 
-                             LS2H_CHIP_CFG_REG_BASE - LS2H_IO_REG_BASE, 
-                             0x00100000);
-    memory_region_add_subregion(get_system_memory(), 
-                                LS2H_CHIP_CFG_REG_BASE - KSEG0_BASE, 
-                                &s.creg_mem);
+    /* chip configuration
+     *   3ff00000-3ff10000: window setting etc.
+     *   map to system ram space [0x900000003ff00000, 0x900000003ff10000)
+     *   To handle IPI, the range of 3ff01000 - 0x3ff02000 might overlap
+     */
     memory_region_init_io(&s.creg_io, NULL, &creg_io_ops, (void*)&s, 
-                          "chip config io", 0x100000);
-    memory_region_add_subregion_overlap(get_system_io(), 
-				LS2H_CHIP_CFG_REG_BASE - LS2H_IO_REG_BASE, &s.creg_io, 0);
+                          "chip config io", 0x10000);
+    memory_region_add_subregion_overlap(get_system_memory(), 
+                                LM1507_CHIP_CFG_REG_BASE - UNCACHED_BASE64, 
+                                &s.creg_io, 0);
 
+    /* HT controller config
+     *   [0x90000efdfb000000, 0x90000efdfc000000)
+     */
+    memory_region_init_io(&s.ht_ctlconf, NULL, &ht_ctlconf_ops, (void*)&s, 
+                          "HT controller config io", 0x1000000);
+    memory_region_add_subregion(get_system_memory(), 
+                                LM1507_HT_CTLCONF_REG_BASE - UNCACHED_BASE64, 
+                                &s.ht_ctlconf);
+
+    /* HT IO
+     *   [0x90000efdfc000000, 0x90000efdfd000000)
+     */
+    memory_region_init_io(&s.ht_io, NULL, &ht_io_ops, (void*)&s, 
+                          "HT IO", 0x1000000);
+    memory_region_add_subregion(get_system_memory(), 
+                                LM1507_HT_IO_REG_BASE - UNCACHED_BASE64, 
+                                &s.ht_io);
+    memory_region_init_alias(&s.ht_io32, NULL, "HT IO 32", &s.ht_io, 
+                          0, 0x1000000);
+    memory_region_add_subregion(get_system_memory(), 
+                                LM1507_HT_IO_REG_BASE32 - KSEG0_BASE, 
+                                &s.ht_io32);
+
+    /* HT memory
+     *   [0x90000e0000000000, 0x90000efd00000000)
+     */
+    memory_region_init_io(&s.ht_mem, NULL, &ht_mem_ops, (void*)&s, 
+                          "HT memory space", 0xfd00000000);
+    memory_region_add_subregion(get_system_memory(), 
+                                LM1507_HT_MEM_REG_BASE - UNCACHED_BASE64, 
+                                &s.ht_mem);
+
+    /* HT bus config
+     *   [0x90000efdfe000000, 0x90000efe00000000)
+     */
+    memory_region_init_io(&s.ht_busconf, NULL, &ht_busconf_ops, (void*)&s, 
+                          "HT bus config io", 0x2000000);
+    memory_region_add_subregion(get_system_memory(), 
+                                LM1507_HT_BUSCONF_REG_BASE - UNCACHED_BASE64, 
+                                &s.ht_busconf);
+    /* also mapped to [ba000000, bc000000) */
+    memory_region_init_alias(&s.ht_busconf32, NULL, "HT busconf 32", &s.ht_busconf, 
+                          0, 0x2000000);
+    memory_region_add_subregion(get_system_memory(), 
+                                LM1507_HT_BUSCONF_REG_BASE32 - KSEG0_BASE, 
+                                &s.ht_busconf32);
+
+#if 0
     /* SATA IO */
     dev = qdev_create(NULL, "sysbus-ahci");
     qdev_prop_set_uint32(dev, "num-ports", 2);
     qdev_init_nofail(dev);
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0,
-            LS2H_SATA_REG_BASE - KSEG0_BASE);
+            LM1507_SATA_REG_BASE - KSEG0_BASE);
     irq = qdev_get_gpio_in(s.intc_dev, 37);
     sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, irq);
 
     /* GPU REG IO */
     memory_region_init_alias(&s.gpu_mem, NULL, "GPU reg io mem",
                              get_system_io(), 
-                             LS2H_GPU_REG_BASE - LS2H_IO_REG_BASE, 
+                             LM1507_GPU_REG_BASE - LM1507_IO_REG_BASE, 
                              0x800);
     memory_region_add_subregion(get_system_memory(), 
-                                LS2H_GPU_REG_BASE - KSEG0_BASE, 
+                                LM1507_GPU_REG_BASE - KSEG0_BASE, 
                                 &s.gpu_mem);
     memory_region_init_io(&s.gpu_io, NULL, &gpu_io_ops, (void*)&s, 
                           "GPU io", 0x800);
     memory_region_add_subregion(get_system_io(), 
-				LS2H_GPU_REG_BASE - LS2H_IO_REG_BASE, &s.gpu_io);
+				LM1507_GPU_REG_BASE - LM1507_IO_REG_BASE, &s.gpu_io);
 
     /* nand REG IO */
     memory_region_init_alias(&s.nand_mem, NULL, "nand reg io mem",
                              get_system_io(), 
-                             LS2H_NAND_REG_BASE - LS2H_IO_REG_BASE, 
+                             LM1507_NAND_REG_BASE - LM1507_IO_REG_BASE, 
                              0x800);
     memory_region_add_subregion(get_system_memory(), 
-                                LS2H_NAND_REG_BASE - KSEG0_BASE, 
+                                LM1507_NAND_REG_BASE - KSEG0_BASE, 
                                 &s.nand_mem);
     memory_region_init_io(&s.nand_io, NULL, &nand_io_ops, (void*)&s, 
                           "nand io", 0x800);
     memory_region_add_subregion(get_system_io(), 
-				LS2H_NAND_REG_BASE - LS2H_IO_REG_BASE, &s.nand_io);
+				LM1507_NAND_REG_BASE - LM1507_IO_REG_BASE, &s.nand_io);
 
     /* I2C0 IO */
     irq = qdev_get_gpio_in(s.intc_dev, 7);
-    s.i2c0_dev = sysbus_create_simple("ls2h-i2c", 
-                                       LS2H_I2C0_REG_BASE - KSEG0_BASE, irq);
+    s.i2c0_dev = sysbus_create_simple("lm1507-i2c", 
+                                       LM1507_I2C0_REG_BASE - KSEG0_BASE, irq);
     i2cbus = (I2CBus *)qdev_get_child_bus(s.i2c0_dev, "i2c");
-    i2c_create_slave(i2cbus, "ls2h-spd", 0xa8);
+    i2c_create_slave(i2cbus, "lm1507-spd", 0xa8);
 
     /* I2C1 IO */
     irq = qdev_get_gpio_in(s.intc_dev, 8);
-    s.i2c1_dev = sysbus_create_simple("ls2h-i2c", 
-                                       LS2H_I2C1_REG_BASE - KSEG0_BASE, irq);
+    s.i2c1_dev = sysbus_create_simple("lm1507-i2c", 
+                                       LM1507_I2C1_REG_BASE - KSEG0_BASE, irq);
     i2cbus = (I2CBus *)qdev_get_child_bus(s.i2c1_dev, "i2c");
-    i2c_create_slave(i2cbus, "ls2h-macrom", 0xa0);
-    i2c_create_slave(i2cbus, "ls2h-edidrom", 0x50);
+    i2c_create_slave(i2cbus, "lm1507-macrom", 0xa0);
+    i2c_create_slave(i2cbus, "lm1507-edidrom", 0x50);
 
     /* ACPI */
     memory_region_init_alias(&s.acpi_mem, NULL, "ACPI I/O mem",
                              get_system_io(), 
-                             LS2H_ACPI_REG_BASE - LS2H_IO_REG_BASE, 
+                             LM1507_ACPI_REG_BASE - LM1507_IO_REG_BASE, 
                              0x8000);
     memory_region_add_subregion(get_system_memory(), 
-                                LS2H_ACPI_REG_BASE - KSEG0_BASE, 
+                                LM1507_ACPI_REG_BASE - KSEG0_BASE, 
                                 &s.acpi_mem);
 
     memory_region_init_io(&s.acpi_io, NULL, &acpi_io_ops, &s, 
                           "ACPI I/O", 0x8000);
     memory_region_add_subregion(get_system_io(), 
-				LS2H_ACPI_REG_BASE - LS2H_IO_REG_BASE,
+				LM1507_ACPI_REG_BASE - LM1507_IO_REG_BASE,
 				&s.acpi_io);
 
     /* RTC */
@@ -1321,7 +1679,7 @@ static void mips_ls2h_init(MachineState *machine)
         int i;
         for (i = 0; i < 8; i++)
             irq[i] = qdev_get_gpio_in(s.intc_dev, 14 + i);
-        sysbus_create_varargs("ls2h-rtc", LS2H_RTC_REG_BASE - KSEG0_BASE, 
+        sysbus_create_varargs("lm1507-rtc", LM1507_RTC_REG_BASE - KSEG0_BASE, 
            irq[0], irq[1], irq[2], irq[3], irq[4], irq[5], irq[6], irq[7]
            , NULL);
     }
@@ -1332,13 +1690,13 @@ static void mips_ls2h_init(MachineState *machine)
     qdev_prop_set_uint64(dev, "dma-offset", 0);
     qdev_init_nofail(dev);
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0,
-            LS2H_OHCI_REG_BASE - KSEG0_BASE);
+            LM1507_OHCI_REG_BASE - KSEG0_BASE);
     irq = qdev_get_gpio_in(s.intc_dev, 33);
     sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, irq);
 
     /* ehci */
     irq = qdev_get_gpio_in(s.intc_dev, 32);
-    sysbus_create_simple("ls2h-ehci-usb", LS2H_EHCI_REG_BASE - KSEG0_BASE, irq);
+    sysbus_create_simple("lm1507-ehci-usb", LM1507_EHCI_REG_BASE - KSEG0_BASE, irq);
 
     /* gmac */
     if (nd_table[0].used) {
@@ -1348,7 +1706,7 @@ static void mips_ls2h_init(MachineState *machine)
         qdev_set_nic_properties(dev, &nd_table[0]);
         qdev_init_nofail(dev);
         sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 
-                        LS2H_GMAC0_REG_BASE - KSEG0_BASE);
+                        LM1507_GMAC0_REG_BASE - KSEG0_BASE);
         irq = qdev_get_gpio_in(s.intc_dev, 35);
         sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, irq);
 
@@ -1357,7 +1715,7 @@ static void mips_ls2h_init(MachineState *machine)
         qdev_set_nic_properties(dev, &nd_table[1]);
         qdev_init_nofail(dev);
         sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 
-                        LS2H_GMAC1_REG_BASE - KSEG0_BASE);
+                        LM1507_GMAC1_REG_BASE - KSEG0_BASE);
         irq = qdev_get_gpio_in(s.intc_dev, 36);
         sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, irq);
     } else {
@@ -1371,7 +1729,7 @@ static void mips_ls2h_init(MachineState *machine)
         qdev_set_nic_properties(dev, &nd_table[0]);
         qdev_init_nofail(dev);
         sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 
-                        LS2H_GMAC0_REG_BASE - KSEG0_BASE);
+                        LM1507_GMAC0_REG_BASE - KSEG0_BASE);
         irq = qdev_get_gpio_in(s.intc_dev, 35);
         sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, irq);
 
@@ -1385,19 +1743,19 @@ static void mips_ls2h_init(MachineState *machine)
         qdev_set_nic_properties(dev, &nd_table[1]);
         qdev_init_nofail(dev);
         sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 
-                        LS2H_GMAC1_REG_BASE - KSEG0_BASE);
+                        LM1507_GMAC1_REG_BASE - KSEG0_BASE);
         irq = qdev_get_gpio_in(s.intc_dev, 36);
         sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, irq);
     }
 
     /* display controller */
     irq = qdev_get_gpio_in(s.intc_dev, 39);
-    sysbus_create_simple("ls2h-dc", LS2H_DC_REG_BASE - KSEG0_BASE, irq);
+    sysbus_create_simple("lm1507-dc", LM1507_DC_REG_BASE - KSEG0_BASE, irq);
 
     /* LPC; keyboard/mouse etc. */
     irq = qdev_get_gpio_in(s.intc_dev, 13);
-    s.lpc_dev = sysbus_create_simple("ls2h-lpc", 
-                                     LS2H_LPC_REG_BASE - KSEG0_BASE, irq);
+    s.lpc_dev = sysbus_create_simple("lm1507-lpc", 
+                                     LM1507_LPC_REG_BASE - KSEG0_BASE, irq);
     for (i = 0; i < 16; i++) {
         s.isa_irqs[i] = qdev_get_gpio_in(s.lpc_dev, i);
     }
@@ -1407,33 +1765,34 @@ static void mips_ls2h_init(MachineState *machine)
                              0, /* note: offset 0 for isa */
                              0x1000);
     memory_region_add_subregion(get_system_memory(), 
-                                LS2H_LPC_IO_BASE - KSEG0_BASE, 
+                                LM1507_LPC_IO_BASE - KSEG0_BASE, 
                                 &s.lpc_mem);
 
     /* we don't really has isabus; fake one to use pckeyboard emulation */
     isabus = isa_bus_new(NULL, &s.lpc_mem, get_system_io(), NULL);
     isa_bus_irqs(isabus, (qemu_irq *)&s.isa_irqs);
     isa_create_simple(isabus, "i8042");
-
-
+#endif
 }
 
-static void mips_ls2h_machine_init(MachineClass *mc)
+static void mips_lm1507_machine_init(MachineClass *mc)
 {
-    mc->desc = "Loongson 2H SoC reference board";
-    mc->init = mips_ls2h_init;
+    mc->desc = "Lemote LX-1507 board";
+    mc->init = mips_lm1507_init;
 }
 
-DEFINE_MACHINE("ls2h", mips_ls2h_machine_init)
+DEFINE_MACHINE("lm1507", mips_lm1507_machine_init)
 
 /* register devices */
-static void ls2h_register_types(void)
+static void lm1507_register_types(void)
 {
-    type_register_static(&ls2h_spd_info);
-    type_register_static(&ls2h_macrom_info);
-    type_register_static(&ls2h_edidrom_info);
-    type_register_static(&ls2h_lpc_info);
-    type_register_static(&ls2h_rtc_info);
+#if 0
+    type_register_static(&lm1507_spd_info);
+    type_register_static(&lm1507_macrom_info);
+    type_register_static(&lm1507_edidrom_info);
+    type_register_static(&lm1507_lpc_info);
+    type_register_static(&lm1507_rtc_info);
+#endif
 }
 
-type_init(ls2h_register_types)
+type_init(lm1507_register_types)

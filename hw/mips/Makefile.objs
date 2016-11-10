@@ -3,4 +3,5 @@ obj-y += addr.o cputimer.o mips_int.o
 obj-$(CONFIG_JAZZ) += mips_jazz.o
 obj-$(CONFIG_FULONG) += mips_fulong2e.o
 obj-$(CONFIG_LS2H) += mips_ls2hsoc.o
+obj-$(CONFIG_LM1507) += mips_lm1507.o
 obj-y += gt64xxx_pci.o

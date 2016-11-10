@@ -23,9 +23,12 @@
 #endif
 
 #define R_SPCR         (0)
+#define CR_IE          (1<<7)
 #define CR_ENABLE      (1<<6)
 
 #define R_SPSR         (1)
+#define SR_TX_SPIF    (1 << 7)
+#define SR_TX_WCOL    (1 << 6)
 #define SR_TX_FULL    (1 << 3)
 #define SR_TX_EMPTY   (1 << 2)
 #define SR_RX_FULL    (1 << 1)
@@ -59,6 +62,7 @@ typedef struct Ls2hSPI {
     /* irq to system */
     qemu_irq irq;
     int irqline;
+    int sent;
 
     /* chip select to slave */
     uint8_t num_cs;
@@ -90,7 +94,26 @@ static void rxfifo_reset(Ls2hSPI *s)
 
 static void ls2h_spi_update_irq(Ls2hSPI *s)
 {
-    /* TODO */
+    uint32_t pending;
+
+    if (!fifo8_is_empty(&s->rx_fifo) || s->sent) {
+        s->regs[R_SPSR] |= SR_TX_SPIF;
+        s->sent = 0;
+    }
+
+    pending = s->regs[R_SPSR] & SR_TX_SPIF;
+
+    pending = pending && (s->regs[R_SPCR] & CR_IE);
+    pending = !!pending;
+
+    /* This call lies right in the data paths so don't call the
+       irq chain unless things really changed.  */
+    if (pending != s->irqline) {
+        s->irqline = pending;
+        DB_PRINT("irq_change of state %d SR:%x CR:%X\n",
+                    pending, s->regs[R_SPSR], s->regs[R_SPCR]);
+        qemu_set_irq(s->irq, pending);
+    }
 }
 
 static void ls2h_spi_update_cs(Ls2hSPI *s)
@@ -123,11 +146,11 @@ static void spi_flush_txfifo(Ls2hSPI *s)
 
     while (!fifo8_is_empty(&s->tx_fifo)) {
         tx = (uint32_t)fifo8_pop(&s->tx_fifo);
-        DB_PRINT("data tx:%x\n", tx);
+        DB_PRINT("data tx:%02x\n", tx);
         rx = ssi_transfer(s->spi, tx);
-        DB_PRINT("data rx:%x\n", rx);
+        DB_PRINT("data rx:%02x\n", rx);
         if (fifo8_is_full(&s->rx_fifo)) {
-            //s->regs[R_SPSR] |= IRQ_DRR_OVERRUN;
+            s->regs[R_SPSR] |= SR_TX_WCOL;
         } else {
             fifo8_push(&s->rx_fifo, (uint8_t)rx);
             if (fifo8_is_full(&s->rx_fifo)) {
@@ -138,6 +161,8 @@ static void spi_flush_txfifo(Ls2hSPI *s)
         s->regs[R_SPSR] &= ~SR_RX_EMPTY;
         s->regs[R_SPSR] &= ~SR_TX_FULL;
         s->regs[R_SPSR] |= SR_TX_EMPTY;
+
+        s->sent = 1;
     }
 }
 
@@ -199,6 +224,13 @@ spi_write(void *opaque, hwaddr addr,
         if (value & CR_ENABLE) {
             rxfifo_reset(s);
             txfifo_reset(s);
+        }
+        s->regs[addr] = value;
+        break;
+
+    case R_SPSR:
+        if (value & SR_TX_SPIF) {
+            value &= ~(SR_TX_SPIF);
         }
         s->regs[addr] = value;
         break;
@@ -303,10 +335,11 @@ static int ls2h_spi_init(SysBusDevice *sbd)
     sysbus_init_mmio(sbd, &s->mmio[0]);
 
     memory_region_init_rom_device(&s->mmio[1], OBJECT(s), &spi_rom_ops, s,
-                          "ls2h-spi rom0", 0x100000, &error_fatal);
+                          "ls2h-spi rom0", 0x200000, &error_fatal);
     sysbus_init_mmio(sbd, &s->mmio[1]);
 
     s->irqline = -1;
+    s->sent = 0;
 
     fifo8_create(&s->tx_fifo, FIFO_CAPACITY);
     fifo8_create(&s->rx_fifo, FIFO_CAPACITY);
