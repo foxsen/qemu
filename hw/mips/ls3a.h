@@ -67,6 +67,7 @@
 #define LM1507_HT_BUSCONF_REG_BASE32 0xba000000
 
 #define LM1507_HT_MEM_REG_BASE   LOONGSON_REG(0xe0000000000, 0)
+#define LM1507_ISA_MEM_REG_BASE  0xb0000000
 
 #define LOONGSON_FLASH_BASE	0x1c000000
 #define LOONGSON_FLASH_SIZE	0x02000000	/* 32M */
@@ -337,6 +338,9 @@ extern unsigned long loongson_freqctrl[MAX_PACKAGES];
 
 #define MAX_CPUS 4
 
+#define SLOCK0_ADDR            0x200
+#define SLOCK0_MASK            0x240
+
 #define CORE0_STATUS_OFF       0x000
 #define CORE0_EN_OFF           0x004
 #define CORE0_SET_OFF          0x008
@@ -383,10 +387,101 @@ typedef struct gipi_single {
     qemu_irq irq;
 } gipi_single;
 
-typedef struct gipiState  gipiState;
-struct gipiState {
-	gipi_single core[8];
-} ;
+typedef struct gintcState  gintcState;
+struct gintcState {
+	gipi_single core[4];
+
+    /* the following must be aligned with physical regs */
+    uint32_t route[32/4];
+    uint32_t status;
+    uint32_t en;
+    uint32_t set;
+    uint32_t clear;
+    uint32_t pol;
+    uint32_t edge;
+
+    uint32_t pad[2];
+
+    uint32_t core0_intisr;
+    uint32_t pad0;
+    uint32_t core1_intisr;
+    uint32_t pad1;
+    uint32_t core2_intisr;
+    uint32_t pad2;
+    uint32_t core3_intisr;
+    uint32_t pad3;
+};
+
+#define MAX_PILS 16
+
+#define INT_ROUTER_REGS_BASE   0x3ff01400
+
+#define INT_ROUTER_REGS_SYS_INT0	0x00
+#define INT_ROUTER_REGS_SYS_INT1	0x01
+#define INT_ROUTER_REGS_SYS_INT2	0x02
+#define INT_ROUTER_REGS_SYS_INT3	0x03
+#define INT_ROUTER_REGS_PCI_INT0	0x04
+#define INT_ROUTER_REGS_PCI_INT1	0x05
+#define INT_ROUTER_REGS_PCI_INT2	0x06
+#define INT_ROUTER_REGS_PCI_INT3	0x07
+#define INT_ROUTER_REGS_MATRIX_INT0	0x08
+#define INT_ROUTER_REGS_MATRIX_INT1	0x09
+#define INT_ROUTER_REGS_LPC_INT		0x0a
+#define INT_ROUTER_REGS_MC0		0x0B
+#define INT_ROUTER_REGS_MC1		0x0C
+#define INT_ROUTER_REGS_BARRIER		0x0d
+#define INT_ROUTER_REGS_RESERVE		0x0e
+#define INT_ROUTER_REGS_PCI_PERR	0x0f
+
+#define INT_ROUTER_REGS_HT0_INT0	0x10
+#define INT_ROUTER_REGS_HT0_INT1	0x11
+#define INT_ROUTER_REGS_HT0_INT2	0x12
+#define INT_ROUTER_REGS_HT0_INT3	0x13
+#define INT_ROUTER_REGS_HT0_INT4	0x14
+#define INT_ROUTER_REGS_HT0_INT5	0x15
+#define INT_ROUTER_REGS_HT0_INT6	0x16
+#define INT_ROUTER_REGS_HT0_INT7	0x17
+#define INT_ROUTER_REGS_HT1_INT0	0x18
+#define INT_ROUTER_REGS_HT1_INT1	0x19
+#define INT_ROUTER_REGS_HT1_INT2	0x1a
+#define INT_ROUTER_REGS_HT1_INT3	0x1b
+#define INT_ROUTER_REGS_HT1_INT4	0x1c
+#define INT_ROUTER_REGS_HT1_INT5	0x1d
+#define INT_ROUTER_REGS_HT1_INT6	0x1e
+#define INT_ROUTER_REGS_HT1_INT7	0x1f
+#define IO_CONTROL_REGS_INTISR  	0x20
+#define IO_CONTROL_REGS_INTEN		0x24	
+#define IO_CONTROL_REGS_INTENSET	0x28	
+#define IO_CONTROL_REGS_INTENCLR	0x2c	
+#define IO_CONTROL_REGS_INTEDGE		0x38	
+#define IO_CONTROL_REGS_CORE0_INTISR	0x40	
+#define IO_CONTROL_REGS_CORE1_INTISR	0x48	
+#define IO_CONTROL_REGS_CORE2_INTISR	0x50	
+#define IO_CONTROL_REGS_CORE3_INTISR	0x58	
+
+#define HT_LINK_CONFIG_REG  0x44
+#define HT_IRQ_VECTOR_REG0	0x80	
+#define HT_IRQ_VECTOR_REG1	0x84	
+#define HT_IRQ_VECTOR_REG2	0x88	
+#define HT_IRQ_VECTOR_REG3	0x8C	
+#define HT_IRQ_VECTOR_REG4	0x90	
+#define HT_IRQ_VECTOR_REG5	0x94	
+#define HT_IRQ_VECTOR_REG6	0x98	
+#define HT_IRQ_VECTOR_REG7	0x9C	
+
+#define HT_IRQ_ENABLE_REG0	0xA0	
+#define HT_IRQ_ENABLE_REG1	0xA4	
+#define HT_IRQ_ENABLE_REG2	0xA8	
+#define HT_IRQ_ENABLE_REG3	0xAC	
+#define HT_IRQ_ENABLE_REG4	0xB0	
+#define HT_IRQ_ENABLE_REG5	0xB4	
+#define HT_IRQ_ENABLE_REG6	0xB8	
+#define HT_IRQ_ENABLE_REG7	0xBC	
+
+#define HT_UNCACHE_ENABLE_REG0	0xF0
+#define HT_UNCACHE_BASE_REG0	0xF4
+#define HT_UNCACHE_ENABLE_REG1	0xF8
+#define HT_UNCACHE_BASE_REG1	0xFC
 
 typedef struct LM1507State {
     /*< private >*/
@@ -395,9 +490,9 @@ typedef struct LM1507State {
     
     CPUMIPSState *mycpu[4];
 
-    gipiState gipis;
-    MemoryRegion gipi_io;
-    MemoryRegion gipi_mem;
+    gintcState intc;
+
+	unsigned int ht_ctlconf_reg[0x120/4];
 
     int memory_initialized;
     MemoryRegion mc0_mem;
@@ -428,6 +523,8 @@ typedef struct LM1507State {
     MemoryRegion ht_ctlconf;
     MemoryRegion ht_busconf;
     MemoryRegion ht_busconf32;
+
+    MemoryRegion isa_mem;
 
     DeviceState *netdev0;
     DeviceState *netdev1;

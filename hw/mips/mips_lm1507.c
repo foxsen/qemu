@@ -20,6 +20,7 @@
 #include "hw/sysbus.h"
 #include "hw/devices.h"
 #include "hw/isa/isa.h"
+#include "hw/i386/pc.h"
 #include "hw/ssi.h"
 #include "hw/i2c/i2c.h"
 #include "sysemu/block-backend.h"
@@ -33,6 +34,9 @@
 #include "hw/loader.h"
 #include "hw/mips/bios.h"
 #include "hw/ide.h"
+#include "hw/isa/isa.h"
+#include "hw/pci/pci.h"
+#include "hw/pci/pci_host.h"
 #include "elf.h"
 #include "sysemu/blockdev.h"
 #include "exec/address-spaces.h"
@@ -198,96 +202,6 @@ static void main_cpu_reset(void *opaque)
     }
 }
 
-/* inter-processor interrupts */
-static void gipi_writel(void *opaque, hwaddr addr, uint64_t val, unsigned size)
-{
-    gipiState * s = opaque;
-    CPUState *cpu = current_cpu;
-
-    int node = (addr >> 44) & 3;
-	int coreno = (addr >> 8) & 3;
-	int no = coreno + node * 4;
-    
-    if(size!=4) hw_error("size not 4");
-
-//    printf("gipi_writel addr=%llx val=%8x\n", addr, val);
-    addr &= 0xff;
-    switch(addr){
-        case CORE0_STATUS_OFF: 
-            hw_error("CORE0_SET_OFF Can't be write\n");
-            break;
-        case CORE0_EN_OFF:
-		if((cpu->mem_io_vaddr&0xff)!=addr) break;
-            s->core[no].en = val;
-            break;
-        case CORE0_SET_OFF:
-            s->core[no].status |= val;
-            qemu_irq_raise(s->core[no].irq);
-            break;
-        case CORE0_CLEAR_OFF:
-		if((cpu->mem_io_vaddr&0xff)!=addr) break;
-            s->core[no].status ^= val;
-            qemu_irq_lower(s->core[no].irq);
-            break;
-        case 0x20 ... 0x3c:
-            s->core[no].buf[(addr-0x20)/4] = val;
-            break;
-        default:
-            break;
-       }
-    DPRINTF("gipi_write: addr=0x%02lx val=0x%02lx cpu=%d\n", addr, val, 
-            (int)current_cpu->cpu_index);
-}
-
-static uint64_t gipi_readl(void *opaque, hwaddr addr, unsigned size)
-{
-    gipiState * s = opaque;
-
-    uint32_t ret = 0;
-    int node = (addr >> 44) & 3;
-	int coreno = (addr >> 8) & 3;
-	int no = coreno + node*4;
-    addr &= 0xff;
-
-    if(size!=4) hw_error("size not 4 %d", size);
-
-    switch(addr){
-        case CORE0_STATUS_OFF: 
-            ret =  s->core[no].status;
-            break;
-        case CORE0_EN_OFF:
-            ret =  s->core[no].en;
-            break;
-        case CORE0_SET_OFF:
-            ret = 0;//hw_error("CORE0_SET_OFF Can't be Read\n");
-            break;
-        case CORE0_CLEAR_OFF:
-            ret = 0;//hw_error("CORE0_CLEAR_OFF Can't be Read\n");
-        case 0x20 ... 0x3c:
-            ret = s->core[no].buf[(addr-0x20)/4];
-            break;
-        default:
-            break;
-       }
-
-    DPRINTF("gipi_read: addr=0x%02lx val=0x%02x cpu=%d\n", addr, ret, 
-            (int)current_cpu->cpu_index);
-    return ret;
-}
-
-static const MemoryRegionOps gipi_ops = {
-    .read = gipi_readl,
-    .write = gipi_writel,
-    .endianness = DEVICE_NATIVE_ENDIAN,
-};
-
-#if 0
-static int board_map_irq(int bus,int dev,int func,int pin)
-{
-    return pin;
-}
-#endif
-
 static void ls3a_serial_set_irq(void *opaque, int irq, int level)
 {
     int i;
@@ -433,38 +347,188 @@ static const MemoryRegionOps misc_io_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
+static void ht_update_irq(void *opaque,int disable)
+{
+    LM1507State *s = opaque;
+
+    uint32_t isr,ier,irtr,core,irq_nr;
+
+    isr = s->ht_ctlconf_reg[HT_IRQ_VECTOR_REG0/4];
+    ier = s->ht_ctlconf_reg[HT_IRQ_ENABLE_REG0/4];
+
+    irtr = s->intc.route[INT_ROUTER_REGS_HT1_INT0];
+
+    core = irtr & 0xf;
+    irq_nr = ((irtr >> 4) & 0xf);
+
+    if(core > 0 && irq_nr > 0)
+    {
+        if((isr & ier) && !disable)
+            qemu_irq_raise(s->mycpu[ffs(core) - 1]->irq[ffs(irq_nr) + 1]);
+        else
+            qemu_irq_lower(s->mycpu[ffs(core) - 1]->irq[ffs(irq_nr) + 1]);
+    }
+}
+
+static void ht_set_irq(void *opaque, int irq, int level)
+{
+    LM1507State *s = opaque;
+    uint32_t isr = 0;
+
+    if (irq == 0) {
+        if (level)
+            isr = (cpu_inb(0x20)&~cpu_inb(0x21)) | ((cpu_inb(0xa0)&~cpu_inb(0xa1)) << 8);
+        else 
+            isr = 0;
+        s->ht_ctlconf_reg[HT_IRQ_VECTOR_REG0/4] = isr; 
+    }
+
+    ht_update_irq(opaque,0);
+}
+
+static void *ls3a_intctl_init(ISABus *isa_bus, void *opache)
+{
+    qemu_irq *ht_irq;
+    qemu_irq *i8259;
+
+	ht_irq = qemu_allocate_irqs(ht_set_irq, opache, 8);
+
+	i8259 = i8259_init(isa_bus, ht_irq[0]); 
+
+	cpu_outb(0x4d0, 0xff);
+	cpu_outb(0x4d1, 0xff);
+
+    return i8259;
+}
+
 /* chip config io */
 static void creg_write(void *opaque, hwaddr addr, uint64_t val,
                                 unsigned int size)
 {
-    DPRINTF("creg write addr %lx with val %lx size %d\n", addr, val, size);
-    if (addr == 0x200) {
-        if (val != 0) {
-            uint64_t size = (~s.scache0_mask & ((1LL<< PA_BITS) - 1)) + 1;
-            s.scache0_addr = val & ( (1LL << PA_BITS) - 1);
-            fprintf(stderr, "enable scache access %lx %lx\n", s.scache0_addr, size);
+    LM1507State *s = (LM1507State *)opaque;
+    int node = (addr >> 44) & 3;
+    int coreno = (addr >> 8) & 3;
+    int no = coreno + node * 4;
 
-            memory_region_init_ram(&s.scache0_ram, NULL, "lm1507.scache", 
+    DPRINTF("creg write addr %lx with val %lx size %d\n", addr, val, size);
+
+
+    /* don't support multi node yet */
+    addr &= ~(3ULL << 44);
+
+    if (addr == SLOCK0_ADDR) {
+        /* lock scache control */
+        if (val != 0) {
+            uint64_t size = (~s->scache0_mask & ((1LL<< PA_BITS) - 1)) + 1;
+            s->scache0_addr = val & ( (1LL << PA_BITS) - 1);
+            fprintf(stderr, "enable scache access %lx %lx\n", s->scache0_addr, size);
+
+            memory_region_init_ram(&s->scache0_ram, NULL, "lm1507.scache", 
                     size, &error_fatal);
 
             memory_region_add_subregion_overlap(get_system_memory(), 
-                    s.scache0_addr, &s.scache0_ram, 1);
+                    s->scache0_addr, &s->scache0_ram, 1);
         } else {
             DPRINTF("disable scache locked access\n");
-            memory_region_del_subregion(get_system_memory(), &s.scache0_ram);
-            memory_region_unref(&s.scache0_ram);
+            memory_region_del_subregion(get_system_memory(), &s->scache0_ram);
+            memory_region_unref(&s->scache0_ram);
         }
+    } else if (addr == SLOCK0_MASK) {
+        s->scache0_mask = val;
+    } else if (addr >= 0x1000 && addr < 0x1400) {
+        CPUState *cpu = current_cpu;
 
-    } else if (addr == 0x240) {
-        s.scache0_mask = val;
+        if (size != 4) hw_error("size not 4");
+
+        /* interrupt control
+         * 0x1000 - 0x1400: coren IPI status/int/set/clr
+         */
+        addr &= 0xff;
+        switch(addr){
+            case CORE0_STATUS_OFF: 
+                hw_error("CORE0_STATUS_OFF Can't be write\n");
+                break;
+            case CORE0_EN_OFF:
+                if ((cpu->mem_io_vaddr & 0xff) != addr) break;
+                s->intc.core[no].en = val;
+                break;
+            case CORE0_SET_OFF:
+                s->intc.core[no].status |= val;
+                qemu_irq_raise(s->intc.core[no].irq);
+                break;
+            case CORE0_CLEAR_OFF:
+                if ((cpu->mem_io_vaddr & 0xff) != addr) break;
+                s->intc.core[no].status ^= val;
+                qemu_irq_lower(s->intc.core[no].irq);
+                break;
+            case 0x20 ... 0x3c:
+                s->intc.core[no].buf[(addr-0x20)/4] = val;
+                break;
+            default:
+                break;
+        }
+    } else if (addr >= 0x1400 && addr < 0x1460) {
+        addr = addr - 0x1400;
+
+        if (size != 4) hw_error("size not 4");
+
+        if (addr == INT_ROUTER_REGS_HT1_INT0) {
+            uint32_t old;
+            old = s->intc.route[addr/4];
+            if (old != val)	
+                ht_update_irq(s,1);
+            s->intc.route[addr/4] = val;
+            ht_update_irq(s,0);
+        }
+        *(uint32*)((void*)&s->intc.route + addr) = val;
     }
 }
 
 static uint64_t creg_read(void *opaque, hwaddr addr, unsigned size)
 {
+    LM1507State *s = (LM1507State *)opaque;
+    int node = (addr >> 44) & 3;
+    int coreno = (addr >> 8) & 3;
+    int no = coreno + node * 4;
+
     uint64_t val = -1LL;
 
     DPRINTF("creg read addr %lx size %d val %lx\n", addr, size, val);
+
+    addr &= ~(3ULL << 44);
+
+    if (addr == SLOCK0_ADDR) {
+        val = s->scache0_addr;
+    } else if (addr == SLOCK0_MASK) {
+        val = s->scache0_mask;
+    } else if (addr >= 0x1000 && addr < 0x1400) {
+        addr &= 0xff;
+        if (size != 4) hw_error("size not 4");
+        switch(addr){
+            case CORE0_STATUS_OFF: 
+                val =  s->intc.core[no].status;
+                break;
+            case CORE0_EN_OFF:
+                val =  s->intc.core[no].en;
+                break;
+            case CORE0_SET_OFF:
+                val = 0; //hw_error("CORE0_SET_OFF Can't be Read\n");
+                break;
+            case CORE0_CLEAR_OFF:
+                val = 0; //hw_error("CORE0_CLEAR_OFF Can't be Read\n");
+            case 0x20 ... 0x3c:
+                val = s->intc.core[no].buf[(addr-0x20)/4];
+                break;
+            default:
+                break;
+        }
+    } else if (addr >= 0x1400 && addr < 0x1460) {
+        addr = addr - 0x1400;
+        if (size != 4) hw_error("size not 4");
+
+        val = *(uint32*)((void*)&s->intc.route + addr);
+    }
+
     return val;
 }
 
@@ -543,29 +607,44 @@ static const MemoryRegionOps nand_io_ops = {
 #endif
 
 /* ht controller config reg io */
-static uint64_t link_control = 0;
 static int64_t timer_count = 10;
 static void ht_ctlconf_write(void *opaque, hwaddr addr, uint64_t val,
                                 unsigned int size)
 {
+    LM1507State *s = (LM1507State *)opaque;
+
     DPRINTF("HT controller config write addr %lx with val %lx size %d\n", addr, val, size);
+
+    if (addr >= 0x120) return;
+
     if (addr == 0x44) {
         /* don't set crc error bits */
-        link_control = val & ~(0x300);
+        val = val & ~(0x300);
     } 
+
+    s->ht_ctlconf_reg[addr / 4] = val;
 }
 
 static uint64_t ht_ctlconf_read(void *opaque, hwaddr addr, unsigned size)
 {
+    LM1507State *s = (LM1507State *)opaque;
     uint64_t val = -1LL;
 
-    if (addr == 0x44) {
-        val = link_control;
+    if (addr >= 0x120) return val;
+
+    if (addr == HT_LINK_CONFIG_REG) {
+        val = s->ht_ctlconf_reg[addr / 4];
         /* set init complete after each read to emulate system reset */
         if (timer_count > 0) timer_count--;
         if (timer_count == 0) 
-            link_control |= (1ULL<<5);
+            s->ht_ctlconf_reg[HT_LINK_CONFIG_REG / 4] |= (1ULL<<5);
+    } else if ( addr == HT_IRQ_VECTOR_REG0) {
+        /* connect i8259 to ht0 */
+        val = (cpu_inb(0x20) & ~cpu_inb(0x21)) | ((cpu_inb(0xa0) & ~cpu_inb(0xa1)) << 8);
+    } else {
+        val = s->ht_ctlconf_reg[addr / 4];
     }
+
     DPRINTF("HT controller config read addr %lx size %d val %lx\n", addr, size, val);
     return val;
 }
@@ -574,12 +653,12 @@ static const MemoryRegionOps ht_ctlconf_ops = {
     .read = ht_ctlconf_read,
     .write = ht_ctlconf_write,
     .valid = {
-        .min_access_size = 1,
-        .max_access_size = 8,
+        .min_access_size = 4,
+        .max_access_size = 4,
     },
     .impl = {
-        .min_access_size = 1,
-        .max_access_size = 8,
+        .min_access_size = 4,
+        .max_access_size = 4,
     },
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
@@ -621,13 +700,15 @@ static const MemoryRegionOps ht_io_ops = {
 static void ht_mem_write(void *opaque, hwaddr addr, uint64_t val,
                                 unsigned int size)
 {
+    LM1507State *s = (LM1507State *)opaque;
+
     DPRINTF("HT memory write addr %lx with val %lx size %d\n", addr, val, size);
     if (addr == 0x10000) {
         /* watchdog control, bios will use watchdog to reset system, 
          * clear the init complete bit
          */
         if (val == 0x81) {
-            link_control &= ~(1ULL << 5);
+            s->ht_ctlconf_reg[HT_LINK_CONFIG_REG / 4] &= ~(1ULL << 5);
             timer_count = 10;
         }
     } 
@@ -1349,7 +1430,8 @@ static TypeInfo lm1507_rtc_info = {
     .class_init    = lm1507_rtc_class_init,
     .instance_size = sizeof(LM1507RTCState),
 };
-#endif
+#endif //if 0
+
 
 /* machine init entrance */
 static void mips_lm1507_init(MachineState *machine)
@@ -1367,7 +1449,8 @@ static void mips_lm1507_init(MachineState *machine)
     CPUMIPSState *env;
     MIPSCPU *cpu;
     //I2CBus *i2cbus;
-    //ISABus *isabus;
+    ISABus *isabus;
+    qemu_irq *i8259;
     DeviceState *dev;
     //MemoryRegion *mr;
     qemu_irq irq;
@@ -1377,8 +1460,6 @@ static void mips_lm1507_init(MachineState *machine)
     if (cpu_model == NULL) {
         cpu_model = "Loongson-3A2000";
     }
-
-    memory_region_init_io(&s.gipi_io, NULL, &gipi_ops, (void *)&s.gipis, "gipi", 0x1000);
 
     for(i = 0; i < smp_cpus; i++) {
         printf("==== init smp_cpus=%d ====\n", i);
@@ -1399,11 +1480,7 @@ static void mips_lm1507_init(MachineState *machine)
         cpu_mips_irq_init_cpu(env);
         cpu_mips_clock_init(env);
 
-        s.gipis.core[i].irq = env->irq[6];
-
-        if (i == 0) 
-            memory_region_add_subregion_overlap(get_system_memory(), 
-                    0x3ff01000, &s.gipi_io, 1);
+        s.intc.core[i].irq = env->irq[6];
     }
     env = s.mycpu[0];
 
@@ -1592,6 +1669,13 @@ static void mips_lm1507_init(MachineState *machine)
                                 LM1507_HT_MEM_REG_BASE - UNCACHED_BASE64, 
                                 &s.ht_mem);
 
+    /* also mapped to [10000000, 11000000) for legacy devices */
+    memory_region_init_alias(&s.isa_mem, NULL, "ISA memory", &s.ht_mem, 
+                          0, 0x1000000);
+    memory_region_add_subregion(get_system_memory(), 
+                                LM1507_ISA_MEM_REG_BASE - KSEG0_BASE, 
+                                &s.isa_mem);
+
     /* HT bus config
      *   [0x90000efdfe000000, 0x90000efe00000000)
      */
@@ -1606,6 +1690,12 @@ static void mips_lm1507_init(MachineState *machine)
     memory_region_add_subregion(get_system_memory(), 
                                 LM1507_HT_BUSCONF_REG_BASE32 - KSEG0_BASE, 
                                 &s.ht_busconf32);
+
+    isabus = isa_bus_new(NULL, &s.isa_mem, get_system_io(), &error_abort);
+    i8259 = ls3a_intctl_init(isabus, &s);
+    /* The PIC is attached to the MIPS CPU INT0 pin */
+    isa_bus_irqs(isabus, i8259);
+
 
 #if 0
     /* SATA IO */
