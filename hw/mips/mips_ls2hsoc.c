@@ -1021,7 +1021,6 @@ static const TypeInfo ls2h_rtc_info = {
 };
 
 /* machine init entrance */
-static const int sector_len = 64 * 1024;
 static void mips_ls2h_init(MachineState *machine)
 {
     ram_addr_t ram_size = machine->ram_size;

@@ -274,6 +274,8 @@ typedef struct LS2hState {
 
     uint64_t scache0_addr, scache0_mask;
     MemoryRegion scache0_ram;
+    uint64_t scache1_addr, scache1_mask;
+    MemoryRegion scache1_ram;
 
     MemoryRegion ram;
     MemoryRegion ram_hi;

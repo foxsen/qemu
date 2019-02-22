@@ -152,6 +152,8 @@ static inline DATA_TYPE glue(io_read, SUFFIX)(CPUArchState *env,
     hwaddr physaddr = iotlbentry->addr;
     MemoryRegion *mr = iotlb_to_region(cpu, physaddr);
 
+    printf("physaddr %x, addr %x\n", (int)physaddr, (int)addr);
+
     physaddr = (physaddr & TARGET_PAGE_MASK) + addr;
     cpu->mem_io_pc = retaddr;
     if (mr != &io_mem_rom && mr != &io_mem_notdirty && !cpu->can_do_io) {

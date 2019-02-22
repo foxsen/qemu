@@ -19,7 +19,8 @@
 #define KSEG0_BASE             0xa0000000
 #define UNCACHED_BASE64        0x9000000000000000ULL
 
-#define LM1507_IO_REG_BASE     0xbfd00000
+#define LM1507_IO_REG_BASE     0xb8000000
+#define LM1507_SMBUS_REG_BASE     0xb800eee0
 
 #define LM1507_MISC_IO_REG_BASE    0xbfe00000
 
@@ -62,7 +63,7 @@
 
 #define LM1507_HT_CTLCONF_REG_BASE   LOONGSON_REG(0xefdfb000000, 0)
 #define LM1507_HT_IO_REG_BASE        LOONGSON_REG(0xefdfc000000, 0)
-#define LM1507_HT_IO_REG_BASE32      LOONGSON_REG(0xefdfc000000, 0)
+#define LM1507_HT_IO_REG_BASE32      LM1507_IO_REG_BASE
 #define LM1507_HT_BUSCONF_REG_BASE   LOONGSON_REG(0xefdfe000000, 0)
 #define LM1507_HT_BUSCONF_REG_BASE32 0xba000000
 
@@ -340,6 +341,8 @@ extern unsigned long loongson_freqctrl[MAX_PACKAGES];
 
 #define SLOCK0_ADDR            0x200
 #define SLOCK0_MASK            0x240
+#define SLOCK1_ADDR            0x208
+#define SLOCK1_MASK            0x248
 
 #define CORE0_STATUS_OFF       0x000
 #define CORE0_EN_OFF           0x004
@@ -504,6 +507,9 @@ typedef struct LM1507State {
     uint64_t scache0_addr, scache0_mask;
     MemoryRegion scache0_ram;
 
+    uint64_t scache1_addr, scache1_mask;
+    MemoryRegion scache1_ram;
+
     MemoryRegion ram;
     MemoryRegion ram_hi;
     MemoryRegion ram_hi2;
@@ -517,20 +523,38 @@ typedef struct LM1507State {
     MemoryRegion sata_io;
     MemoryRegion acpi_io;
 
-    MemoryRegion ht_io;
-    MemoryRegion ht_io32;
-    MemoryRegion ht_mem;
-    MemoryRegion ht_ctlconf;
-    MemoryRegion ht_busconf;
-    MemoryRegion ht_busconf32;
+    MemoryRegion ht1_lo;
+    AddressSpace ht1_lo_as;
+
+    MemoryRegion ht1_lo_io;
+    MemoryRegion ht1_lo_io_alias;
+    MemoryRegion ht1_lo_io_alias32;
+    MemoryRegion ht1_lo_mem;
+    MemoryRegion ht1_lo_mem_alias;
+    MemoryRegion ht1_lo_ctlconf;
+    MemoryRegion ht1_lo_ctlconf_alias;
+    MemoryRegion ht1_lo_busconf;
+    MemoryRegion ht1_lo_busconf_alias;
+    MemoryRegion ht1_lo_busconf_alias32;
+
+    MemoryRegion pci_mem;
+    AddressSpace pci_mem_as;
+    MemoryRegion pci_mem_alias;
+    MemoryRegion *pci_io_p;
+    MemoryRegion pci_io_alias;
 
     MemoryRegion isa_mem;
+    MemoryRegion smbus_io;
 
     DeviceState *netdev0;
     DeviceState *netdev1;
     DeviceState *spidev;
     DeviceState *i2c0_dev, *i2c1_dev;
     DeviceState *lpc_dev;
+
+    ISABus      *isa_bus;
+    PCIBus      *pci_bus;
+    qemu_irq    *pci_irq;
 
 } LM1507State;
 
