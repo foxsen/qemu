@@ -483,6 +483,9 @@ struct TranslationBlock {
     uintptr_t jmp_list_head;
     uintptr_t jmp_list_next[2];
     uintptr_t jmp_dest[2];
+#ifdef CONFIG_BTMMU
+    bool btmmu_disabled;
+#endif
 };
 
 extern bool parallel_cpus;

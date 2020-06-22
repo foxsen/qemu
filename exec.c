@@ -2342,15 +2342,18 @@ RAMBlock *qemu_ram_alloc_from_fd(ram_addr_t size, MemoryRegion *mr,
         g_free(new_block);
         return NULL;
     }
-
+#ifdef CONFIG_BTMMU
+    /* if guest ram pages can be swapped out, kernel will be more complex */
+    mlock(new_block->host, size);
+#endif
     ram_block_add(new_block, &local_err, ram_flags & RAM_SHARED);
     if (local_err) {
         g_free(new_block);
         error_propagate(errp, local_err);
         return NULL;
     }
-    return new_block;
 
+    return new_block;
 }
 
 

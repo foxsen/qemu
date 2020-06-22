@@ -60,6 +60,7 @@
 #include "sysemu/runstate.h"
 #include "hw/boards.h"
 #include "hw/hw.h"
+#include "btmmu.h"
 
 #ifdef CONFIG_LINUX
 
@@ -1483,6 +1484,17 @@ static void *qemu_tcg_rr_cpu_thread_fn(void *arg)
     rcu_register_thread();
     tcg_register_thread();
 
+#ifdef CONFIG_BTMMU
+    if (btmmu_enabled() && sysconf(_SC_NPROCESSORS_ONLN) >=4) {
+        cpu_set_t cpuset;
+
+        /* only runs on core 3 */
+        CPU_ZERO(&cpuset);
+        CPU_SET(3, &cpuset);
+        pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+    }
+#endif
+
     qemu_mutex_lock_iothread();
     qemu_thread_get_self(cpu->thread);
 
@@ -1960,6 +1972,10 @@ void cpu_remove_sync(CPUState *cpu)
 /* For temporary buffers for forming a name */
 #define VCPU_THREAD_NAME_SIZE 16
 
+#ifdef CONFIG_BTMMU
+extern void btmmu_sigbus_handler(int host_signum, siginfo_t *info, void *puc);
+#endif
+
 static void qemu_tcg_init_vcpu(CPUState *cpu)
 {
     char thread_name[VCPU_THREAD_NAME_SIZE];
@@ -1978,6 +1994,23 @@ static void qemu_tcg_init_vcpu(CPUState *cpu)
         tcg_region_inited = 1;
         tcg_region_init();
     }
+
+#ifdef CONFIG_BTMMU
+    if(btmmu_enabled()) {
+        sigset_t set;
+        struct sigaction sigact;
+
+        sigemptyset(&set);
+        sigaddset(&set, SIGSEGV);
+        pthread_sigmask(SIG_UNBLOCK, &set, NULL);
+
+        memset(&sigact, 0, sizeof(sigact));
+        sigact.sa_sigaction = btmmu_sigsegv_handler;
+        sigact.sa_flags = SA_SIGINFO;
+        sigaction(SIGSEGV, &sigact, NULL);
+
+    }
+#endif
 
     if (qemu_tcg_mttcg_enabled() || !single_tcg_cpu_thread) {
         cpu->thread = g_malloc0(sizeof(QemuThread));

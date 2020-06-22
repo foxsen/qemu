@@ -35,6 +35,7 @@
 #include "qemu/error-report.h"
 #include "hw/boards.h"
 #include "qapi/qapi-builtin-visit.h"
+#include "btmmu.h"
 
 typedef struct TCGState {
     AccelState parent_obj;
@@ -107,6 +108,11 @@ static bool default_mttcg_enabled(void)
     if (use_icount || TCG_OVERSIZED_GUEST) {
         return false;
     } else {
+#ifdef CONFIG_BTMMU
+        if (btmmu_enabled()) {
+            return false;
+        }
+#endif
 #ifdef TARGET_SUPPORTS_MTTCG
         return check_tcg_memory_orders_compatible();
 #else

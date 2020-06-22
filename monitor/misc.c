@@ -355,6 +355,25 @@ static void hmp_info_opcount(Monitor *mon, const QDict *qdict)
 }
 #endif
 
+#ifdef CONFIG_BTMMU
+#include "btmmu.h"
+void hmp_info_btmmu(Monitor *mon, const QDict *qdict)
+{
+    const char *name = qdict_get_try_str(qdict, "name");
+    if (btmmu_enabled()) {
+        CPUState *cs = mon_get_cpu();
+
+        if (!cs) {
+            monitor_printf(mon, "No CPU available\n");
+            return;
+        }
+        btmmu_info_dump(cs, name);
+    } else {
+        monitor_printf(mon, "BTMMU not enabled\n");
+    }
+}
+#endif
+
 static void hmp_info_sync_profile(Monitor *mon, const QDict *qdict)
 {
     int64_t max = qdict_get_try_int(qdict, "max", 10);

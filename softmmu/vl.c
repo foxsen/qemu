@@ -113,6 +113,7 @@
 #include "qapi/qmp/qerror.h"
 #include "sysemu/iothread.h"
 #include "qemu/guest-random.h"
+#include "btmmu.h"
 
 #define MAX_VIRTIO_CONSOLES 1
 
@@ -3449,6 +3450,11 @@ void qemu_init(int argc, char **argv, char **envp)
                 olist = qemu_find_opts("machine");
                 qemu_opts_parse_noisily(olist, "accel=kvm", false);
                 break;
+#ifdef CONFIG_BTMMU
+            case QEMU_OPTION_enable_btmmu:
+                btmmu_allowed = true;
+                break;
+#endif
             case QEMU_OPTION_M:
             case QEMU_OPTION_machine:
                 olist = qemu_find_opts("machine");

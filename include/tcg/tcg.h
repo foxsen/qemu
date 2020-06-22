@@ -675,6 +675,9 @@ struct TCGContext {
 
     uint16_t gen_insn_end_off[TCG_MAX_INSNS];
     target_ulong gen_insn_data[TCG_MAX_INSNS][TARGET_INSN_START_WORDS];
+#ifdef CONFIG_BTMMU
+    TranslationBlock *curr_tb;
+#endif
 };
 
 extern TCGContext tcg_init_ctx;

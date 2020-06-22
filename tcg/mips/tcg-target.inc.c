@@ -23,6 +23,10 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+#include "btmmu.h"
+
+//#define CONFIG_BTMMU_CHECK
+#define USE_BTMMU
 
 #ifdef HOST_WORDS_BIGENDIAN
 # define MIPS_BE  1
@@ -1292,7 +1296,7 @@ static void add_qemu_ldst_label(TCGContext *s, int is_ld, TCGMemOpIdx oi,
                                 TCGType ext,
                                 TCGReg datalo, TCGReg datahi,
                                 TCGReg addrlo, TCGReg addrhi,
-                                void *raddr, tcg_insn_unit *label_ptr[2])
+                                void *raddr, tcg_insn_unit *label_ptr[3])
 {
     TCGLabelQemuLdst *label = new_ldst_label(s);
 
@@ -1308,6 +1312,11 @@ static void add_qemu_ldst_label(TCGContext *s, int is_ld, TCGMemOpIdx oi,
     if (TCG_TARGET_REG_BITS < TARGET_LONG_BITS) {
         label->label_ptr[1] = label_ptr[1];
     }
+#ifdef CONFIG_BTMMU
+    if (btmmu_enabled() && !s->curr_tb->btmmu_disabled) {
+        label->label_ptr[2] = label_ptr[2];
+    }
+#endif
 }
 
 static bool tcg_out_qemu_ld_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
@@ -1322,6 +1331,11 @@ static bool tcg_out_qemu_ld_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
     if (TCG_TARGET_REG_BITS < TARGET_LONG_BITS) {
         reloc_pc16(l->label_ptr[1], s->code_ptr);
     }
+#if defined(CONFIG_BTMMU) && defined(USE_BTMMU)
+    if (btmmu_enabled() && !s->curr_tb->btmmu_disabled) {
+        reloc_pc16(l->label_ptr[2], l->raddr);
+    }
+#endif
 
     i = 1;
     if (TCG_TARGET_REG_BITS < TARGET_LONG_BITS) {
@@ -1372,6 +1386,11 @@ static bool tcg_out_qemu_st_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
     if (TCG_TARGET_REG_BITS < TARGET_LONG_BITS) {
         reloc_pc16(l->label_ptr[1], s->code_ptr);
     }
+#if defined(CONFIG_BTMMU) && defined(USE_BTMMU)
+    if (btmmu_enabled() && !s->curr_tb->btmmu_disabled) {
+        reloc_pc16(l->label_ptr[2], l->raddr);
+    }
+#endif
 
     i = 1;
     if (TCG_TARGET_REG_BITS < TARGET_LONG_BITS) {
@@ -1516,6 +1535,22 @@ static void tcg_out_qemu_ld_direct(TCGContext *s, TCGReg lo, TCGReg hi,
     }
 }
 
+#ifdef CONFIG_BTMMU
+static inline void tcg_out_opc_setmem(TCGContext *s, int mid)
+{
+    int32_t inst;
+
+    /* 2014.7.29 Jin: setmem and lw should be kept in the same page,
+     * otherwise cpu will trigger SIGILL. */
+    if ((((uint64_t)(s->code_ptr) + sizeof(int)) % qemu_host_page_size) == 0)
+        tcg_out_nop(s);
+
+    inst = (0x12 << 26) | (0xf << 21);
+    inst |= (mid & 0x3) << 18;
+    tcg_out32(s, inst);
+}
+#endif
+
 static void tcg_out_qemu_ld(TCGContext *s, const TCGArg *args, bool is_64)
 {
     TCGReg addr_regl, addr_regh __attribute__((unused));
@@ -1523,9 +1558,16 @@ static void tcg_out_qemu_ld(TCGContext *s, const TCGArg *args, bool is_64)
     TCGMemOpIdx oi;
     MemOp opc;
 #if defined(CONFIG_SOFTMMU)
-    tcg_insn_unit *label_ptr[2];
+    tcg_insn_unit *label_ptr[3];
 #endif
     TCGReg base = TCG_REG_A0;
+#ifdef CONFIG_BTMMU
+    TCGReg addr_bak = TCG_REG_A3;
+#endif
+#ifdef CONFIG_BTMMU_CHECK
+    TCGReg flag = TCG_REG_T0;
+    TCGReg data = TCG_REG_T1;
+#endif
 
     data_regl = *args++;
     data_regh = (TCG_TARGET_REG_BITS == 32 && is_64 ? *args++ : 0);
@@ -1535,8 +1577,64 @@ static void tcg_out_qemu_ld(TCGContext *s, const TCGArg *args, bool is_64)
     opc = get_memop(oi);
 
 #if defined(CONFIG_SOFTMMU)
+#ifdef CONFIG_BTMMU
+    if(btmmu_enabled() && !s->curr_tb->btmmu_disabled) {
+        tcg_insn_unit *start;
+        int mem_idx = get_mmuidx(oi);
+        if (TCG_TARGET_REG_BITS > TARGET_LONG_BITS) {
+            tcg_out_ext32u(s, base, addr_regl);
+        } else {
+            base = addr_regl;
+        }
+        if (addr_regl == data_regl || base == data_regl) {
+            /* will data will destroy address, we need it
+               in the old path */
+            tcg_out_mov(s, TCG_TYPE_REG, addr_bak, addr_regl);
+        }
+#ifdef CONFIG_BTMMU_CHECK
+        assert(mem_idx != 0);
+        assert(data_regl != flag && addr_regl != flag);
+        assert(data_regl != data && addr_regl != data);
+#endif
+        tcg_out_opc_setmem(s, mem_idx == MMU_USER_IDX ? 2 : 3);
+        start = s->code_ptr;
+        tcg_out_qemu_ld_direct(s, data_regl, data_regh, base, opc, is_64);
+        label_ptr[2] = s->code_ptr;
+        assert(((unsigned long)(s->code_ptr) - (unsigned long)start) == 4);
+        tcg_out_opc_br(s, OPC_BEQ, TCG_REG_ZERO, TCG_REG_ZERO);
+#ifdef CONFIG_BTMMU_CHECK
+        tcg_out_movi(s, TCG_TYPE_I32, flag, 1);
+        /* if hit, flag = 1, if not, flag = 0 */
+        tcg_out_mov(s, TCG_TYPE_REG, flag, TCG_REG_ZERO);
+        reloc_pc16(s->code_ptr - 3, s->code_ptr);
+        //tcg_out_mov(s, TCG_TYPE_REG, data, data_regl);
+        tcg_out_mov(s, TCG_TYPE_REG, data, data_regl);
+#else
+        tcg_out_nop(s);
+        reloc_pc16(s->code_ptr - 2, s->code_ptr);
+#endif
+        if (addr_regl == data_regl || base == data_regl) {
+            tcg_out_mov(s, TCG_TYPE_REG, addr_regl, addr_bak);
+        }
+    }
+#endif
     tcg_out_tlb_load(s, base, addr_regl, addr_regh, oi, label_ptr, 1);
     tcg_out_qemu_ld_direct(s, data_regl, data_regh, base, opc, is_64);
+#ifdef CONFIG_BTMMU_CHECK
+    if(btmmu_enabled() && !s->curr_tb->btmmu_disabled) {
+        tcg_out_opc_br(s, OPC_BEQ, flag, TCG_REG_ZERO);
+        tcg_out_nop(s);
+        tcg_out_opc_br(s, OPC_BEQ, data, data_regl);
+        tcg_out_nop(s);
+        /* if (data != 0 && data != data_regl) break */
+        //tcg_out32(s, 0xd);
+        tcg_out_opc_br(s, OPC_BEQ, TCG_REG_ZERO, TCG_REG_ZERO);
+        tcg_out_nop(s);
+        reloc_pc16(s->code_ptr - 2, s->code_ptr - 2);
+        reloc_pc16(s->code_ptr - 4, s->code_ptr);
+        reloc_pc16(s->code_ptr - 6, s->code_ptr);
+    }
+#endif
     add_qemu_ldst_label(s, 1, oi,
                         (is_64 ? TCG_TYPE_I64 : TCG_TYPE_I32),
                         data_regl, data_regh, addr_regl, addr_regh,
@@ -1626,9 +1724,15 @@ static void tcg_out_qemu_st(TCGContext *s, const TCGArg *args, bool is_64)
     TCGMemOpIdx oi;
     MemOp opc;
 #if defined(CONFIG_SOFTMMU)
-    tcg_insn_unit *label_ptr[2];
+    tcg_insn_unit *label_ptr[3];
 #endif
     TCGReg base = TCG_REG_A0;
+#ifdef CONFIG_BTMMU_CHECK
+    TCGReg flag = TCG_REG_T1;
+    TCGReg data = TCG_REG_A2;
+    TCGReg data1 = TCG_REG_A3;
+    TCGReg data2 = TCG_REG_T0;
+#endif
 
     data_regl = *args++;
     data_regh = (TCG_TARGET_REG_BITS == 32 && is_64 ? *args++ : 0);
@@ -1638,7 +1742,73 @@ static void tcg_out_qemu_st(TCGContext *s, const TCGArg *args, bool is_64)
     opc = get_memop(oi);
 
 #if defined(CONFIG_SOFTMMU)
+#ifdef CONFIG_BTMMU
+    if(btmmu_enabled() && !s->curr_tb->btmmu_disabled) {
+        tcg_insn_unit *start;
+        int mem_idx = get_mmuidx(oi);
+        if (TCG_TARGET_REG_BITS > TARGET_LONG_BITS) {
+            tcg_out_ext32u(s, base, addr_regl);
+        } else {
+            base = addr_regl;
+        }
+        tcg_out_opc_setmem(s, mem_idx == MMU_USER_IDX ? 2 : 3);
+        start = s->code_ptr;
+#ifdef CONFIG_BTMMU_CHECK
+        assert(flag != data_regl && flag != addr_regl);
+#endif
+        tcg_out_qemu_st_direct(s, data_regl, data_regh, base, opc);
+        label_ptr[2] = s->code_ptr;
+        assert(((unsigned long)(s->code_ptr) - (unsigned long)start) == 4);
+        tcg_out_opc_br(s, OPC_BEQ, TCG_REG_ZERO, TCG_REG_ZERO);
+#ifdef CONFIG_BTMMU_CHECK
+        tcg_out_movi(s, TCG_TYPE_I32, flag, 1);
+        /* if previous load trigger exception, set flag = 0*/
+        /* this move will be skipped by the above br if the st succeed */
+        tcg_out_mov(s, TCG_TYPE_REG, flag, TCG_REG_ZERO);
+        reloc_pc16(s->code_ptr - 3, s->code_ptr);
+#else
+        tcg_out_nop(s);
+        reloc_pc16(s->code_ptr - 2, s->code_ptr);
+#endif
+    }
+#endif
     tcg_out_tlb_load(s, base, addr_regl, addr_regh, oi, label_ptr, 0);
+#ifdef CONFIG_BTMMU_CHECK
+    if(btmmu_enabled() && !s->curr_tb->btmmu_disabled) {
+        tcg_out_opc_br(s, OPC_BEQ, flag, TCG_REG_ZERO);
+        tcg_out_nop(s);
+        assert(data != data_regl && data1 != data_regl);
+        /* load back */
+        tcg_out_qemu_ld_direct(s, data, data_regh, base, opc, is_64);
+        switch (opc & (MO_SSIZE)) {
+            case MO_8:
+                tcg_out_ext8s(s, data1, data);
+                tcg_out_ext8s(s, data2, data_regl);
+                break;
+            case MO_16:
+                tcg_out_ext16s(s, data1, data);
+                tcg_out_ext16s(s, data2, data_regl);
+                break;
+            case MO_32:
+                tcg_out_ext32u(s, data1, data);
+                tcg_out_ext32u(s, data2, data_regl);
+                break;
+            case MO_64:
+                tcg_out_mov(s, TCG_TYPE_REG, data1, data);
+                tcg_out_mov(s, TCG_TYPE_REG, data2, data_regl);
+                break;
+        }
+        tcg_out_opc_br(s, OPC_BEQ, data1, data2);
+        tcg_out_nop(s);
+        /* if (data != 0 && data != data_regl) break */
+        //tcg_out32(s, 0xd);
+        tcg_out_opc_br(s, OPC_BEQ, TCG_REG_ZERO, TCG_REG_ZERO);
+        tcg_out_nop(s);
+        reloc_pc16(s->code_ptr - 2, s->code_ptr - 2);
+        reloc_pc16(s->code_ptr - 4, s->code_ptr);
+        reloc_pc16(s->code_ptr - 9, s->code_ptr);
+    }
+#endif
     tcg_out_qemu_st_direct(s, data_regl, data_regh, base, opc);
     add_qemu_ldst_label(s, 0, oi,
                         (is_64 ? TCG_TYPE_I64 : TCG_TYPE_I32),

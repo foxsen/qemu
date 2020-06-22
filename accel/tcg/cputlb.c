@@ -40,6 +40,10 @@
 #include "qemu/plugin-memory.h"
 #endif
 
+#ifdef CONFIG_BTMMU
+#include "btmmu.h"
+#endif
+
 /* DEBUG defines, enable DEBUG_TLB_LOG to log to the CPU_LOG_MMU target */
 /* #define DEBUG_TLB */
 /* #define DEBUG_TLB_LOG */
@@ -96,6 +100,26 @@ static void tlb_window_reset(CPUTLBDesc *desc, int64_t ns,
     desc->window_begin_ns = ns;
     desc->window_max_entries = max_entries;
 }
+
+#ifdef CONFIG_BTMMU
+static void update_tlb_info(CPUTLBDescFast *f, int mmu_idx, int n_entries)
+{
+    if (!btmmu_enabled()) return;
+
+    /* malloc/g_new cannot ensure alignment of CPU_TLB_ENTRY_BITS, so an
+       entries might be splited in two physical pages, which lead to harder
+       access in kernel. We need to make sure it is properly aligned.
+     */
+    if (((unsigned long)f->table) & ((1<<CPU_TLB_ENTRY_BITS) - 1)) {
+        g_free(f->table);
+        f->table = aligned_alloc(1<<CPU_TLB_ENTRY_BITS, n_entries << CPU_TLB_ENTRY_BITS);
+        assert(f->table);
+    }
+    mlock(f->table, n_entries << CPU_TLB_ENTRY_BITS);
+    /* tell kernel */
+    btmmu_update_tlb((unsigned long)(f->table), mmu_idx, f->mask);
+}
+#endif
 
 /**
  * tlb_mmu_resize_locked() - perform TLB resize bookkeeping; resize if necessary
@@ -229,6 +253,9 @@ static void tlb_flush_one_mmuidx_locked(CPUArchState *env, int mmu_idx,
     CPUTLBDescFast *fast = &env_tlb(env)->f[mmu_idx];
 
     tlb_mmu_resize_locked(desc, fast, now);
+#ifdef CONFIG_BTMMU
+    update_tlb_info(fast, mmu_idx, tlb_n_entries(fast));
+#endif
     tlb_mmu_flush_locked(desc, fast);
 }
 
@@ -267,6 +294,9 @@ void tlb_init(CPUState *cpu)
 
     for (i = 0; i < NB_MMU_MODES; i++) {
         tlb_mmu_init(&env_tlb(env)->d[i], &env_tlb(env)->f[i], now);
+#ifdef CONFIG_BTMMU
+        update_tlb_info(&env_tlb(env)->f[i],  i, (1 << CPU_TLB_DYN_DEFAULT_BITS));
+#endif
     }
 }
 
@@ -376,6 +406,11 @@ void tlb_flush_by_mmuidx(CPUState *cpu, uint16_t idxmap)
 
 void tlb_flush(CPUState *cpu)
 {
+#ifdef CONFIG_BTMMU
+    btmmu_qemu_tlb_flush++;
+    if (btmmu_enabled())
+        btmmu_flush_all(cpu);
+#endif
     tlb_flush_by_mmuidx(cpu, ALL_MMUIDX_BITS);
 }
 
@@ -427,11 +462,22 @@ static inline bool tlb_entry_is_empty(const CPUTLBEntry *te)
 }
 
 /* Called with tlb_c.lock held */
+#ifndef CONFIG_BTMMU
 static inline bool tlb_flush_entry_locked(CPUTLBEntry *tlb_entry,
                                           target_ulong page)
+#else
+static inline bool tlb_flush_entry_locked(CPUArchState *env,
+                                          CPUTLBEntry *tlb_entry,
+                                          int midx,
+                                          target_ulong page)
+#endif
 {
     if (tlb_hit_page_anyprot(tlb_entry, page)) {
         memset(tlb_entry, -1, sizeof(*tlb_entry));
+#ifdef CONFIG_BTMMU
+        if (btmmu_enabled())
+            btmmu_flush_page(env_cpu(env), page, midx, 0);
+#endif
         return true;
     }
     return false;
@@ -446,7 +492,11 @@ static inline void tlb_flush_vtlb_page_locked(CPUArchState *env, int mmu_idx,
 
     assert_cpu_is_self(env_cpu(env));
     for (k = 0; k < CPU_VTLB_SIZE; k++) {
+#ifndef CONFIG_BTMMU
         if (tlb_flush_entry_locked(&d->vtable[k], page)) {
+#else
+        if (tlb_flush_entry_locked(env, &d->vtable[k], mmu_idx, page)) {
+#endif
             tlb_n_used_entries_dec(env, mmu_idx);
         }
     }
@@ -464,8 +514,16 @@ static void tlb_flush_page_locked(CPUArchState *env, int midx,
                   TARGET_FMT_lx "/" TARGET_FMT_lx ")\n",
                   midx, lp_addr, lp_mask);
         tlb_flush_one_mmuidx_locked(env, midx, get_clock_realtime());
+#ifdef CONFIG_BTMMU
+        if (btmmu_enabled())
+            btmmu_flush_all(env_cpu(env));
+#endif
     } else {
+#ifndef CONFIG_BTMMU
         if (tlb_flush_entry_locked(tlb_entry(env, midx, page), page)) {
+#else
+        if (tlb_flush_entry_locked(env, tlb_entry(env, midx, page), midx, page)) {
+#endif
             tlb_n_used_entries_dec(env, midx);
         }
         tlb_flush_vtlb_page_locked(env, midx, page);
@@ -738,6 +796,11 @@ void tlb_reset_dirty(CPUState *cpu, ram_addr_t start1, ram_addr_t length)
 
     int mmu_idx;
 
+#ifdef CONFIG_BTMMU
+    //if (btmmu_enabled())
+        //btmmu_flush_all(cpu);
+#endif
+
     env = cpu->env_ptr;
     qemu_spin_lock(&env_tlb(env)->c.lock);
     for (mmu_idx = 0; mmu_idx < NB_MMU_MODES; mmu_idx++) {
@@ -774,6 +837,11 @@ void tlb_set_dirty(CPUState *cpu, target_ulong vaddr)
     int mmu_idx;
 
     assert_cpu_is_self(cpu);
+
+#ifdef CONFIG_BTMMU
+    if (btmmu_enabled())
+        btmmu_flush_all(cpu);
+#endif
 
     vaddr &= TARGET_PAGE_MASK;
     qemu_spin_lock(&env_tlb(env)->c.lock);
@@ -985,6 +1053,18 @@ void tlb_set_page_with_attrs(CPUState *cpu, target_ulong vaddr,
             tn.addr_write |= TLB_WATCHPOINT;
         }
     }
+#ifdef CONFIG_BTMMU
+    if (btmmu_enabled()) {
+        if ((memory_region_is_ram(section->mr) || memory_region_is_romd(section->mr))) {
+            if (tn.addr_write != vaddr_page) prot &= ~PROT_WRITE; 
+            if (prot & PROT_READ) {
+                btmmu_map_page(cpu, vaddr_page, addend, mmu_idx, prot & PROT_WRITE ? 1 : 0);
+            }
+        } else {
+            //btmmu_flush_page(cpu, vaddr_page, mmu_idx, 0);
+        }
+    }
+#endif
 
     copy_tlb_helper_locked(te, &tn);
     tlb_n_used_entries_inc(env, mmu_idx);

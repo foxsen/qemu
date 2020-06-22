@@ -48,5 +48,8 @@ void hmp_info_tlb(Monitor *mon, const QDict *qdict);
 void hmp_mce(Monitor *mon, const QDict *qdict);
 void hmp_info_local_apic(Monitor *mon, const QDict *qdict);
 void hmp_info_io_apic(Monitor *mon, const QDict *qdict);
+#ifdef CONFIG_BTMMU
+void hmp_info_btmmu(Monitor *mon, const QDict *qdict);
+#endif
 
 #endif /* MONITOR_HMP_TARGET_H */

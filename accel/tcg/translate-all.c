@@ -59,6 +59,10 @@
 #include "sysemu/cpus.h"
 #include "sysemu/tcg.h"
 
+#ifdef CONFIG_BTMMU
+#include "btmmu.h"
+#endif
+
 /* #define DEBUG_TB_INVALIDATE */
 /* #define DEBUG_TB_FLUSH */
 /* make various TB consistency checks */
@@ -1153,6 +1157,10 @@ void tcg_exec_init(unsigned long tb_size)
     page_init();
     tb_htable_init();
     code_gen_alloc(tb_size);
+#ifdef CONFIG_BTMMU
+    if (btmmu_enabled())
+        btmmu_init();
+#endif
 #if defined(CONFIG_SOFTMMU)
     /* There's no guest base to take into account, so go ahead and
        initialize the prologue now.  */
@@ -1724,6 +1732,22 @@ TranslationBlock *tb_gen_code(CPUState *cpu,
     tb->orig_tb = NULL;
     tb->trace_vcpu_dstate = *cpu->trace_dstate;
     tcg_ctx->tb_cflags = cflags;
+#ifdef CONFIG_BTMMU
+    if(btmmu_enabled()) {
+#ifdef BTMMU_USER_ONLY
+        CPUX86State *env = (CPUX86State*)cpu->env_ptr;
+        int is_user = (env->hflags & HF_CPL_MASK) == 3;
+#else
+        int is_user = 1;
+#endif
+        if (!is_user) {
+            tb->btmmu_disabled = 1;
+        } else {
+            tb->btmmu_disabled = 0;
+        }
+    }
+#endif
+
  tb_overflow:
 
 #ifdef CONFIG_PROFILER
@@ -1756,6 +1780,10 @@ TranslationBlock *tb_gen_code(CPUState *cpu,
     atomic_set(&prof->tb_count, prof->tb_count + 1);
     atomic_set(&prof->interm_time, prof->interm_time + profile_getclock() - ti);
     ti = profile_getclock();
+#endif
+
+#ifdef CONFIG_BTMMU
+    tcg_ctx->curr_tb = tb;
 #endif
 
     gen_code_size = tcg_gen_code(tcg_ctx, tb);

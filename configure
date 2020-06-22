@@ -191,6 +191,17 @@ supported_hax_target() {
     return 1
 }
 
+supported_btmmu_target() {
+    test "$btmmu" = "yes" || return 1
+    glob "$1" "*-softmmu" || return 1
+    case "${1%-softmmu}" in
+        i386|x86_64)
+            return 0
+        ;;
+    esac
+    return 1
+}
+
 supported_kvm_target() {
     test "$kvm" = "yes" || return 1
     glob "$1" "*-softmmu" || return 1
@@ -264,6 +275,7 @@ supported_target() {
     esac
     test "$tcg" = "yes" && return 0
     supported_kvm_target "$1" && return 0
+    supported_btmmu_target "$1" && return 0
     supported_xen_target "$1" && return 0
     supported_hax_target "$1" && return 0
     supported_hvf_target "$1" && return 0
@@ -1205,6 +1217,10 @@ for opt do
   ;;
   --enable-kvm) kvm="yes"
   ;;
+  --enable-btmmu) btmmu="yes"
+  ;;
+  --disable-btmmu) btmmu="no"
+  ;;
   --disable-hax) hax="no"
   ;;
   --enable-hax) hax="yes"
@@ -1849,6 +1865,7 @@ disabled with --disable-FEATURE, default is enabled if available:
   membarrier      membarrier system call (for Linux 4.14+ or Windows)
   fdt             fdt device tree
   kvm             KVM acceleration support
+  btmmu           binary translation mmu acceleration support
   hax             HAX acceleration support
   hvf             Hypervisor.framework acceleration support
   whpx            Windows Hypervisor Platform acceleration support
@@ -1945,8 +1962,8 @@ fi
 
 # Note that if the Python conditional here evaluates True we will exit
 # with status 1 which is a shell 'false' value.
-if ! $python -c 'import sys; sys.exit(sys.version_info < (3,5))'; then
-  error_exit "Cannot use '$python', Python >= 3.5 is required." \
+if ! $python -c 'import sys; sys.exit(sys.version_info < (3,0))'; then
+  error_exit "Cannot use '$python', Python >= 3.0 is required." \
       "Use --python=/path/to/python to specify a supported Python."
 fi
 
@@ -6798,6 +6815,7 @@ echo "HAX support       $hax"
 echo "HVF support       $hvf"
 echo "WHPX support      $whpx"
 echo "TCG support       $tcg"
+echo "BTMMU support       $btmm"
 if test "$tcg" = "yes" ; then
     echo "TCG debug enabled $debug_tcg"
     echo "TCG interpreter   $tcg_interpreter"
@@ -7363,6 +7381,9 @@ if test "$tcg" = "yes"; then
   if test "$tcg_interpreter" = "yes" ; then
     echo "CONFIG_TCG_INTERPRETER=y" >> $config_host_mak
   fi
+fi
+if test "$btmmu" = "yes"; then
+    echo "CONFIG_BTMMU=y" >> $config_host_mak
 fi
 if test "$fdatasync" = "yes" ; then
   echo "CONFIG_FDATASYNC=y" >> $config_host_mak

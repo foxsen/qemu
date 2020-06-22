@@ -137,6 +137,10 @@ static void init_delay_params(SyncClocks *sc, const CPUState *cpu)
 }
 #endif /* CONFIG USER ONLY */
 
+target_ulong breakpoint_addrx = 0;
+int breakpoint_hit_count= 0;
+int breakpoint_ignore_count= 0;
+
 /* Execute a TB, and fix up the CPU state afterwards if necessary */
 static inline tcg_target_ulong cpu_tb_exec(CPUState *cpu, TranslationBlock *itb)
 {
@@ -168,6 +172,15 @@ static inline tcg_target_ulong cpu_tb_exec(CPUState *cpu, TranslationBlock *itb)
         qemu_log_unlock(logfile);
     }
 #endif /* DEBUG_DISAS */
+
+    if(itb->pc == breakpoint_addrx) {
+        breakpoint_hit_count += 1;
+        if (breakpoint_hit_count >= breakpoint_ignore_count) {
+            fprintf(stderr, "[debug] break point TB exec %#x. cnt = %d.\n",
+                    itb->pc, breakpoint_hit_count);
+        }
+    }
+
 
     ret = tcg_qemu_tb_exec(env, tb_ptr);
     cpu->can_do_io = 1;

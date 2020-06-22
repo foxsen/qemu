@@ -1371,6 +1371,7 @@ typedef struct HVFX86LazyFlags {
     target_ulong auxbits;
 } HVFX86LazyFlags;
 
+struct TranslationBlock;
 typedef struct CPUX86State {
     /* standard registers */
     target_ulong regs[CPU_NB_REGS];
@@ -1625,6 +1626,9 @@ typedef struct CPUX86State {
     unsigned nr_dies;
     unsigned nr_nodes;
     unsigned pkg_offset;
+#ifdef CONFIG_BTMMU
+    struct TranslationBlock *current_tb;
+#endif
 } CPUX86State;
 
 struct kvm_msrs;

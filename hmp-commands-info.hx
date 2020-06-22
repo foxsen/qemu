@@ -252,6 +252,21 @@ SRST
     Show the active virtual memory mappings.
 ERST
 
+#if defined(CONFIG_BTMMU)
+    {
+        .name       = "btmmu",
+        .args_type  = "name:s?",
+        .params     = "[name]",
+        .help       = "show the dynamic btmmu info, name can be stat",
+        .cmd        = hmp_info_btmmu,
+    },
+#endif
+
+SRST
+  ``info btmmu [stat]``
+  show btmmu info
+ERST
+
     {
         .name       = "mtree",
         .args_type  = "flatview:-f,dispatch_tree:-d,owner:-o,disabled:-D",

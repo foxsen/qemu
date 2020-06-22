@@ -3798,6 +3798,9 @@ SRST
     available if KVM support is enabled when compiling.
 ERST
 
+DEF("enable-btmmu", 0, QEMU_OPTION_enable_btmmu, \
+    "-enable-btmmu    enable binary translation mmu support\n", QEMU_ARCH_ALL)
+
 DEF("xen-domid", HAS_ARG, QEMU_OPTION_xen_domid,
     "-xen-domid id   specify xen guest domain id\n", QEMU_ARCH_ALL)
 DEF("xen-attach", 0, QEMU_OPTION_xen_attach,

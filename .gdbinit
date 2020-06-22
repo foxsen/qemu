@@ -5,4 +5,5 @@
 #   add-auto-load-safe-path /path/to/qemu/.gdbinit
 
 # Load QEMU-specific sub-commands and settings
+handle SIGSEGV noprint nostop
 source scripts/qemu-gdb.py
