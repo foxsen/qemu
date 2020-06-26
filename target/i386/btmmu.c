@@ -231,7 +231,7 @@ void btmmu_sigsegv_handler(int host_signum, siginfo_t *info, void *puc)
         CPUArchState *env = (CPUArchState*)current_cpu->env_ptr;
         CPUTLBEntry *entry = tlb_entry(env, mmu_idx, address);
         target_ulong tlb_addr =  cause == 2 ? entry->addr_read : entry->addr_write;
-        if (((tlb_addr & 0xfff) == 0) && tlb_hit(tlb_addr, target_addr)) {
+        if (((entry->addr_read & 0xfff) == 0) && ((entry->addr_write & 0xfff) == 0) && tlb_hit(tlb_addr, target_addr)) {
             // hit, refill the ftlb
             if (btmmu_debug == 1)
                 qemu_printf("x86_addr %x, mips_addr %lx\n", target_addr, target_addr + entry->addend); 
