@@ -398,6 +398,7 @@ vhost_vsock=""
 vhost_user=""
 vhost_user_fs=""
 kvm="no"
+btmmu="no"
 hax="no"
 hvf="no"
 whpx="no"
@@ -6815,7 +6816,7 @@ echo "HAX support       $hax"
 echo "HVF support       $hvf"
 echo "WHPX support      $whpx"
 echo "TCG support       $tcg"
-echo "BTMMU support       $btmm"
+echo "BTMMU support     $btmmu"
 if test "$tcg" = "yes" ; then
     echo "TCG debug enabled $debug_tcg"
     echo "TCG interpreter   $tcg_interpreter"
@@ -7381,9 +7382,6 @@ if test "$tcg" = "yes"; then
   if test "$tcg_interpreter" = "yes" ; then
     echo "CONFIG_TCG_INTERPRETER=y" >> $config_host_mak
   fi
-fi
-if test "$btmmu" = "yes"; then
-    echo "CONFIG_BTMMU=y" >> $config_host_mak
 fi
 if test "$fdatasync" = "yes" ; then
   echo "CONFIG_FDATASYNC=y" >> $config_host_mak
@@ -8177,6 +8175,12 @@ if supported_kvm_target $target; then
     echo "$target/config-devices.mak: CONFIG_KVM=y" >> $config_host_mak
 else
     echo "$target/config-devices.mak: CONFIG_KVM=n" >> $config_host_mak
+fi
+if supported_btmmu_target $target; then
+    echo "CONFIG_BTMMU=y" >> $config_target_mak
+    echo "$target/config-devices.mak: CONFIG_BTMMU=y" >> $config_host_mak
+else
+    echo "$target/config-devices.mak: CONFIG_BTMMU=n" >> $config_host_mak
 fi
 if supported_hax_target $target; then
     echo "CONFIG_HAX=y" >> $config_target_mak
