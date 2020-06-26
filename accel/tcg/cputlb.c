@@ -756,8 +756,13 @@ void tlb_unprotect_code(ram_addr_t ram_addr)
  *
  * Called with tlb_c.lock held.
  */
+#ifndef CONFIG_BTMMU
 static void tlb_reset_dirty_range_locked(CPUTLBEntry *tlb_entry,
                                          uintptr_t start, uintptr_t length)
+#else
+static void tlb_reset_dirty_range_locked(CPUState *cpu, CPUTLBEntry *tlb_entry,
+                                         uintptr_t start, uintptr_t length, int midx)
+#endif
 {
     uintptr_t addr = tlb_entry->addr_write;
 
@@ -772,6 +777,12 @@ static void tlb_reset_dirty_range_locked(CPUTLBEntry *tlb_entry,
             atomic_set(&tlb_entry->addr_write,
                        tlb_entry->addr_write | TLB_NOTDIRTY);
 #endif
+#ifdef CONFIG_BTMMU
+            if (btmmu_enabled()) {
+                btmmu_flush_page(cpu, tlb_entry->addr_write, midx, 0);
+            }
+#endif
+
         }
     }
 }
@@ -796,11 +807,6 @@ void tlb_reset_dirty(CPUState *cpu, ram_addr_t start1, ram_addr_t length)
 
     int mmu_idx;
 
-#ifdef CONFIG_BTMMU
-    //if (btmmu_enabled())
-        //btmmu_flush_all(cpu);
-#endif
-
     env = cpu->env_ptr;
     qemu_spin_lock(&env_tlb(env)->c.lock);
     for (mmu_idx = 0; mmu_idx < NB_MMU_MODES; mmu_idx++) {
@@ -808,13 +814,23 @@ void tlb_reset_dirty(CPUState *cpu, ram_addr_t start1, ram_addr_t length)
         unsigned int n = tlb_n_entries(&env_tlb(env)->f[mmu_idx]);
 
         for (i = 0; i < n; i++) {
+#ifndef CONFIG_BTMMU
             tlb_reset_dirty_range_locked(&env_tlb(env)->f[mmu_idx].table[i],
                                          start1, length);
+#else
+            tlb_reset_dirty_range_locked(cpu, &env_tlb(env)->f[mmu_idx].table[i],
+                                         start1, length, mmu_idx);
+#endif
         }
 
         for (i = 0; i < CPU_VTLB_SIZE; i++) {
+#ifndef CONFIG_BTMMU
             tlb_reset_dirty_range_locked(&env_tlb(env)->d[mmu_idx].vtable[i],
                                          start1, length);
+#else
+            tlb_reset_dirty_range_locked(cpu, &env_tlb(env)->d[mmu_idx].vtable[i],
+                                         start1, length, mmu_idx);
+#endif
         }
     }
     qemu_spin_unlock(&env_tlb(env)->c.lock);
@@ -837,11 +853,6 @@ void tlb_set_dirty(CPUState *cpu, target_ulong vaddr)
     int mmu_idx;
 
     assert_cpu_is_self(cpu);
-
-#ifdef CONFIG_BTMMU
-    if (btmmu_enabled())
-        btmmu_flush_all(cpu);
-#endif
 
     vaddr &= TARGET_PAGE_MASK;
     qemu_spin_lock(&env_tlb(env)->c.lock);
@@ -1057,6 +1068,7 @@ void tlb_set_page_with_attrs(CPUState *cpu, target_ulong vaddr,
     if (btmmu_enabled()) {
         if ((memory_region_is_ram(section->mr) || memory_region_is_romd(section->mr))) {
             if (tn.addr_write != vaddr_page) prot &= ~PROT_WRITE; 
+            if (tn.addr_read != vaddr_page) prot &= ~PROT_READ; 
             if (prot & PROT_READ) {
                 btmmu_map_page(cpu, vaddr_page, addend, mmu_idx, prot & PROT_WRITE ? 1 : 0);
             }
