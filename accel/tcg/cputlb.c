@@ -296,6 +296,7 @@ void tlb_init(CPUState *cpu)
         tlb_mmu_init(&env_tlb(env)->d[i], &env_tlb(env)->f[i], now);
 #ifdef CONFIG_BTMMU
         update_tlb_info(&env_tlb(env)->f[i],  i, (1 << CPU_TLB_DYN_DEFAULT_BITS));
+        tlb_mmu_flush_locked(&env_tlb(env)->d[i], &env_tlb(env)->f[i]);
 #endif
     }
 }
