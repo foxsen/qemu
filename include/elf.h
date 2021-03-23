@@ -174,6 +174,7 @@ typedef struct mips_elf_abiflags_v0 {
 
 #define EM_NANOMIPS     249     /* Wave Computing nanoMIPS */
 
+#define EM_LOONGARCH	258	/* Loongarch */
 /*
  * This is an interim value that we will use until the committee comes
  * up with a final number.
@@ -1403,6 +1404,33 @@ typedef struct {
 #define EF_RISCV_FLOAT_ABI_QUAD   0x0006
 #define EF_RISCV_RVE              0x0008
 #define EF_RISCV_TSO              0x0010
+
+/* LoongArch relocations */
+#define R_LARCH_NONE                            0
+#define R_LARCH_32                              1
+#define R_LARCH_64                              2
+#define R_LARCH_MARK_LA                         20
+#define R_LARCH_MARK_PCREL                      21
+#define R_LARCH_SOP_PUSH_PCREL                  22
+#define R_LARCH_SOP_PUSH_ABSOLUTE               23
+#define R_LARCH_SOP_PUSH_PLT_PCREL              29
+#define R_LARCH_SOP_SUB                         32
+#define R_LARCH_SOP_SL                          33
+#define R_LARCH_SOP_SR                          34
+#define R_LARCH_SOP_ADD                         35
+#define R_LARCH_SOP_AND                         36
+#define R_LARCH_SOP_IF_ELSE                     37
+#define R_LARCH_SOP_POP_32_S_10_5               38
+#define R_LARCH_SOP_POP_32_U_10_12              39
+#define R_LARCH_SOP_POP_32_S_10_12              40
+#define R_LARCH_SOP_POP_32_S_10_16              41
+#define R_LARCH_SOP_POP_32_S_10_16_S2           42
+#define R_LARCH_SOP_POP_32_S_5_20               43
+#define R_LARCH_SOP_POP_32_S_0_5_10_16_S2       44
+#define R_LARCH_SOP_POP_32_S_0_10_10_16_S2      45
+#define R_LARCH_SOP_POP_32_U                    46
+#define R_LARCH_ADD64                           51
+#define R_LARCH_SUB64                           56
 
 typedef struct elf32_rel {
   Elf32_Addr	r_offset;

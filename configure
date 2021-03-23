@@ -727,6 +727,8 @@ elif check_define __arm__ ; then
   cpu="arm"
 elif check_define __aarch64__ ; then
   cpu="aarch64"
+elif check_define __loongarch__ ; then
+  cpu="loongarch"
 else
   cpu=$(uname -m)
 fi
@@ -760,6 +762,10 @@ case "$cpu" in
   ;;
   mips*)
     cpu="mips"
+    supported_cpu="yes"
+  ;;
+  loongarch)
+    cpu="loongarch"
     supported_cpu="yes"
   ;;
   sparc|sun4[cdmuv])
