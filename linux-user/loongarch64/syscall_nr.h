@@ -168,6 +168,8 @@
 #define TARGET_NR_uname 160
 #define TARGET_NR_sethostname 161
 #define TARGET_NR_setdomainname 162
+#define TARGET_NR_getrlimit 163
+#define TARGET_NR_setrlimit 164
 #define TARGET_NR_getrusage 165
 #define TARGET_NR_umask 166
 #define TARGET_NR_prctl 167
@@ -282,32 +284,7 @@
 #define TARGET_NR_statx 291
 #define TARGET_NR_io_pgetevents 292
 #define TARGET_NR_rseq 293
-#define TARGET_NR_kexec_file_load 294
-#define TARGET_NR_pidfd_send_signal 424
-#define TARGET_NR_io_uring_setup 425
-#define TARGET_NR_io_uring_enter 426
-#define TARGET_NR_io_uring_register 427
-#define TARGET_NR_open_tree 428
-#define TARGET_NR_move_mount 429
-#define TARGET_NR_fsopen 430
-#define TARGET_NR_fsconfig 431
-#define TARGET_NR_fsmount 432
-#define TARGET_NR_fspick 433
-#define TARGET_NR_pidfd_open 434
 #define TARGET_NR_clone3 435
-#define TARGET_NR_close_range 436
-#define TARGET_NR_openat2 437
-#define TARGET_NR_pidfd_getfd 438
-#define TARGET_NR_faccessat2 439
-#define TARGET_NR_process_madvise 440
-#define TARGET_NR_epoll_pwait2 441
-#define TARGET_NR_mount_setattr 442
-#define TARGET_NR_quotactl_fd 443
-#define TARGET_NR_landlock_create_ruleset 444
-#define TARGET_NR_landlock_add_rule 445
-#define TARGET_NR_landlock_restrict_self 446
-#define TARGET_NR_process_mrelease 448
-#define TARGET_NR_futex_waitv 449
-#define TARGET_NR_syscalls 450
+#define TARGET_NR_syscalls 436
 
 #endif /* LINUX_USER_LOONGARCH_SYSCALL_NR_H */
