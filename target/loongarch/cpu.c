@@ -146,11 +146,18 @@ static void loongarch_cpu_do_interrupt(CPUState *cs)
                      " TLBRERA " TARGET_FMT_lx " %s exception\n", __func__,
                      env->pc, env->CSR_ERA, env->CSR_TLBRERA, name);
     }
+    if (cs->exception_index == EXCCODE_INT &&
+       (FIELD_EX64(env->CSR_DBG, CSR_DBG, DST))) {
+        env->CSR_DBG = FIELD_DP64(env->CSR_DBG, CSR_DBG, DEI, 1);
+        goto set_DERA;
+    }
 
     switch (cs->exception_index) {
     case EXCCODE_DBP:
         env->CSR_DBG = FIELD_DP64(env->CSR_DBG, CSR_DBG, DCL, 1);
         env->CSR_DBG = FIELD_DP64(env->CSR_DBG, CSR_DBG, ECODE, 0xC);
+        goto set_DERA;
+    set_DERA:
         env->CSR_DERA = env->pc;
         env->CSR_DBG = FIELD_DP64(env->CSR_DBG, CSR_DBG, DST, 1);
         env->pc = env->CSR_EENTRY + 0x480;
@@ -501,6 +508,8 @@ static void loongarch_cpu_realizefn(DeviceState *dev, Error **errp)
     loongarch_mmu_init(env);
 #endif
 
+    loongarch_cpu_register_gdb_regs_for_features(cs);
+
     cpu_reset(cs);
     qemu_init_vcpu(cs);
 
@@ -620,6 +629,10 @@ static void loongarch_cpu_class_init(ObjectClass *c, void *data)
 #ifdef CONFIG_TCG
     cc->tcg_ops = &loongarch_tcg_ops;
 #endif
+    cc->gdb_read_register = loongarch_cpu_gdb_read_register;
+    cc->gdb_write_register = loongarch_cpu_gdb_write_register;
+    cc->gdb_num_core_regs = 33;
+    cc->gdb_core_xml_file = "loongarch-base64.xml";
 }
 
 #define DEFINE_LOONGARCH_CPU_TYPE(model, initfn) \
