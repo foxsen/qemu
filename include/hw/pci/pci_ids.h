@@ -283,4 +283,7 @@
 
 #define PCI_VENDOR_ID_NVIDIA             0x10de
 
+#define PCI_VENDOR_ID_LOONGSON           0x0014
+#define PCI_DEVICE_ID_LOONGSON_HOST      0x7a00
+
 #endif
