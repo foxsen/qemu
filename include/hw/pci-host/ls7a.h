@@ -23,6 +23,7 @@
 
 #define LS7A_PCI_IO_BASE         0x18004000UL
 #define LS7A_PCI_IO_SIZE         0xC000
+#define LS7A_PCI_IO_OFFSET       0x4000
 
 #define LS7A_PCH_REG_BASE       0x10000000UL
 #define LS7A_IOAPIC_REG_BASE    (LS7A_PCH_REG_BASE)
@@ -36,6 +37,9 @@
 #define PCH_PIC_IRQ_OFFSET      64
 #define LS7A_DEVICE_IRQS        16
 #define LS7A_PCI_IRQS           48
+
+#define LS7A_UART_IRQ           (PCH_PIC_IRQ_OFFSET + 2)
+#define LS7A_UART_BASE          0x1fe001e0
 
 struct LS7APCIState {
     /*< private >*/
@@ -51,6 +55,7 @@ typedef struct LS7APCIEHost {
 
     LS7APCIState pci_dev;
 
+    qemu_irq irqs[LS7A_PCI_IRQS];
     MemoryRegion pci_conf;
     MemoryRegion pci_mmio;
     MemoryRegion pci_io;
