@@ -152,6 +152,7 @@ extern const char * const fregnames[32];
 #define N_IRQS      14
 #define IRQ_TIMER   11
 #define IRQ_IPI     12
+#define IOCSR_NUM   4
 
 #define LOONGARCH_TLB_MAX      (2048 + 64) /* 2048 STLB + 64 MTLB */
 #define LOONGARCH_STLB         2048 /* 2048 STLB */
@@ -256,6 +257,7 @@ struct CPULoongArchState {
 
     AddressSpace *address_space_iocsr;
     MemoryRegion *system_iocsr;
+    MemoryRegion *iocsr_mem[IOCSR_NUM];
 #endif
 };
 
