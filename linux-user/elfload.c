@@ -2840,7 +2840,7 @@ static void load_elf_image(const char *image_name, int image_fd,
          * as to allow the result to not fit with a 32-bit guest on
          * a 32-bit host.
          */
-        info->reserve_brk = 16 * MiB;
+        info->reserve_brk = 32 * MiB;
         hiaddr += info->reserve_brk;
 
         if (ehdr->e_type == ET_EXEC) {
