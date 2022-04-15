@@ -165,6 +165,7 @@ static void loongarch_cpu_do_interrupt(CPUState *cs)
         break;
     case EXCCODE_INT:
     case EXCCODE_PIF:
+    case EXCCODE_ADEF:
         cause = cs->exception_index;
         update_badinstr = 0;
         break;
@@ -180,6 +181,7 @@ static void loongarch_cpu_do_interrupt(CPUState *cs)
     case EXCCODE_INE:
     case EXCCODE_IPE:
     case EXCCODE_FPE:
+    case EXCCODE_VFPE:
         cause = cs->exception_index;
         break;
     default:
@@ -242,7 +244,8 @@ static void loongarch_cpu_do_interrupt(CPUState *cs)
                       env->CSR_ECFG, env->CSR_ESTAT);
     }
 
-    env->CSR_ESTAT = FIELD_DP64(env->CSR_ESTAT, CSR_ESTAT, ECODE, cause);
+    env->CSR_ESTAT = FIELD_DP64(env->CSR_ESTAT, CSR_ESTAT, ECODE, EXCODE_MCODE(cause));
+    env->CSR_ESTAT = FIELD_DP64(env->CSR_ESTAT, CSR_ESTAT, ESUBCODE, EXCODE_SUBCODE(cause));
 
     if (cs->exception_index != EXCCODE_INT) {
         qemu_log_mask(CPU_LOG_INT,
