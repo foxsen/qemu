@@ -228,6 +228,8 @@ static int loongarch_map_address_debug(CPULoongArchState *env, hwaddr *physical,
             index = (address >> dir_base) & ((1 << dir_width) - 1);
             phys = base | index << shift;
             base = ldq_phys(cs->as, phys) & TARGET_PHYS_MASK;
+            /* mask off page dir permission bits */
+            base &= ~0xfff;
             if (base == 0) return TLBRET_NOMATCH;
         }
     }
