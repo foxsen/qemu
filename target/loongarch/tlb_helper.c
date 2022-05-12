@@ -196,12 +196,6 @@ static int loongarch_map_address_debug(CPULoongArchState *env, hwaddr *physical,
 
     for (i = 4; i > 0; i--) {
 
-        huge = (base >> LOONGARCH_PAGE_HUGE_SHIFT) & 0x1;
-
-        if (huge) {
-            break;
-        }
-
         switch (i) {
             case 1:
                 dir_base = FIELD_EX64(env->CSR_PWCL, CSR_PWCL, DIR1_BASE);
@@ -228,19 +222,33 @@ static int loongarch_map_address_debug(CPULoongArchState *env, hwaddr *physical,
             index = (address >> dir_base) & ((1 << dir_width) - 1);
             phys = base | index << shift;
             base = ldq_phys(cs->as, phys) & TARGET_PHYS_MASK;
-            /* mask off page dir permission bits */
-            base &= ~0xfff;
+            huge = (base >> LOONGARCH_PAGE_HUGE_SHIFT) & 0x1;
+            if (!huge) {
+                /* mask off page dir permission bits */
+                base &= ~0xfff;
+            } else {
+                break;
+            }
             if (base == 0) return TLBRET_NOMATCH;
         }
     }
 
     /* pte */
-    dir_base = FIELD_EX64(env->CSR_PWCL, CSR_PWCL, PTBASE);
-    dir_width = FIELD_EX64(env->CSR_PWCL, CSR_PWCL, PTWIDTH);
-    index = (address >> dir_base) & ((1 << dir_width) - 1);
-    phys = base | index << shift;
-    base = ldq_phys(cs->as, phys) & TARGET_PHYS_MASK;
-    if (base == 0) return TLBRET_NOMATCH;
+    if (huge) {
+        /* Huge Page. base is paddr */
+        base = base ^ (1 << LOONGARCH_PAGE_HUGE_SHIFT);
+        /* get physical address of current 4k page */
+        base += (address & TARGET_PHYS_MASK) & ((1 << dir_base) - 1) & (~0xfff);
+    } else {
+        dir_base = FIELD_EX64(env->CSR_PWCL, CSR_PWCL, PTBASE);
+        dir_width = FIELD_EX64(env->CSR_PWCL, CSR_PWCL, PTWIDTH);
+        index = (address >> dir_base) & ((1 << dir_width) - 1);
+        phys = base | index << shift;
+        base = ldq_phys(cs->as, phys) & TARGET_PHYS_MASK;
+        if (base == 0) return TLBRET_NOMATCH;
+    }
+
+    //fprintf(stderr, "debug map: %lx %lx\n", address, base);
 
     v = base & 1;
     d = (base >> 1) & 1;
