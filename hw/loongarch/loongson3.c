@@ -106,7 +106,7 @@ static struct _loaderparams {
 
 static uint64_t cpu_loongarch_virt_to_phys(void *opaque, uint64_t addr)
 {
-    return addr & 0x1fffffffll;
+    return addr & MAKE_64BIT_MASK(0, TARGET_PHYS_ADDR_SPACE_BITS);
 }
 
 static void fw_cfg_add_kernel_info(FWCfgState *fw_cfg)
