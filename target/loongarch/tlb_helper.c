@@ -75,11 +75,7 @@ static int loongarch_map_tlb_entry(CPULoongArchState *env, hwaddr *physical,
         return TLBRET_DIRTY;
     }
 
-    /*
-     * tlb_entry contains ppn[47:12] while 16KiB ppn is [47:15]
-     * need adjust.
-     */
-    *physical = (tlb_ppn << R_TLBENTRY_PPN_SHIFT) |
+    *physical = ((tlb_ppn >> (tlb_ps - R_TLBENTRY_PPN_SHIFT)) << tlb_ps) |
                 (address & MAKE_64BIT_MASK(0, tlb_ps));
     *prot = PAGE_READ;
     if (tlb_d) {
@@ -225,7 +221,7 @@ static int loongarch_map_address_debug(CPULoongArchState *env, hwaddr *physical,
             huge = (base >> LOONGARCH_PAGE_HUGE_SHIFT) & 0x1;
             if (!huge) {
                 /* mask off page dir permission bits */
-                base &= ~0xfff;
+                base &= TARGET_PAGE_MASK;
             } else {
                 break;
             }
@@ -237,14 +233,20 @@ static int loongarch_map_address_debug(CPULoongArchState *env, hwaddr *physical,
     if (huge) {
         /* Huge Page. base is paddr */
         base = base ^ (1 << LOONGARCH_PAGE_HUGE_SHIFT);
-        /* get physical address of current 4k page */
-        base += (address & TARGET_PHYS_MASK) & ((1 << dir_base) - 1) & (~0xfff);
+        /* Move Global bit */
+        base = ((base & (1 << LOONGARCH_HGLOBAL_SHIFT))  >>
+                LOONGARCH_HGLOBAL_SHIFT) << R_TLBENTRY_G_SHIFT |
+                (base & (~(1 << LOONGARCH_HGLOBAL_SHIFT)));
+        /* get TARGET_PAGE_SIZE aligned physical address */
+        base += (address & TARGET_PHYS_MASK) & ((1 << dir_base) - 1) & TARGET_PAGE_MASK;
     } else {
         dir_base = FIELD_EX64(env->CSR_PWCL, CSR_PWCL, PTBASE);
         dir_width = FIELD_EX64(env->CSR_PWCL, CSR_PWCL, PTWIDTH);
         index = (address >> dir_base) & ((1 << dir_width) - 1);
         phys = base | index << shift;
-        base = ldq_phys(cs->as, phys) & TARGET_PHYS_MASK;
+        base = ldq_phys(cs->as, phys);
+        /* get TARGET_PAGE_SIZE aligned physical address */
+        base += (address & TARGET_PHYS_MASK) & ((1 << dir_base) - 1) & TARGET_PAGE_MASK;
         if (base == 0) return TLBRET_NOMATCH;
     }
 
@@ -257,6 +259,9 @@ static int loongarch_map_address_debug(CPULoongArchState *env, hwaddr *physical,
     if (!v)
         return TLBRET_NOMATCH;
 
+    /* physmem cpu_memory_rw_debug expect a TARGET_PAGE_SIZE aligned result
+     * mask off the attribute bits here
+     */
     *physical = base & TARGET_PAGE_MASK;
     if (!d)
         *prot = PAGE_READ;
