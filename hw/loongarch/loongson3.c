@@ -35,6 +35,7 @@
 #include "hw/acpi/aml-build.h"
 #include "qapi/qapi-visit-common.h"
 #include "sysemu/device_tree.h"
+#include "hw/input/i8042.h"
 
 #include <libfdt.h>
 
@@ -308,6 +309,7 @@ static void loongarch_devices_init(DeviceState *pch_pic)
     PCIBus *pci_bus;
     MemoryRegion *ecam_alias, *ecam_reg, *pio_alias, *pio_reg;
     MemoryRegion *mmio_alias, *mmio_reg, *pm_reg;
+    MemoryRegion *i8042;
     int i;
 
     gpex_dev = qdev_new(TYPE_GPEX_HOST);
@@ -386,6 +388,14 @@ static void loongarch_devices_init(DeviceState *pch_pic)
                                 sysbus_mmio_get_region(d, 1));
     memory_region_add_subregion(pm_reg, LS7A_GPE0_RESET_REG,
                                 sysbus_mmio_get_region(d, 2));
+
+     /* Keyboard/mouse (i8042) */
+    i8042 = g_new(MemoryRegion, 1);
+    i8042_mm_init(qdev_get_gpio_in(pch_pic, LS7A_KEYBOARD_IRQ - PCH_PIC_IRQ_OFFSET), 
+                  qdev_get_gpio_in(pch_pic, LS7A_MOUSE_IRQ - PCH_PIC_IRQ_OFFSET),
+                  i8042, 0x10, 0x4);
+    memory_region_add_subregion(get_system_memory(), LS7A_I8042_BASE, i8042);
+
 }
 
 static void loongarch_irq_init(LoongArchMachineState *lams,

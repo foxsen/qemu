@@ -45,4 +45,9 @@
 #define LS7A_RTC_LEN            0x100
 #define LS7A_ACPI_REG_BASE      (LS7A_MISC_REG_BASE + 0x00050000)
 #define LS7A_SCI_IRQ            (PCH_PIC_IRQ_OFFSET + 4)
+
+#define LS7A_KEYBOARD_IRQ       (PCH_PIC_IRQ_OFFSET + 3)
+#define LS7A_MOUSE_IRQ          (PCH_PIC_IRQ_OFFSET + 4)
+#define LS7A_I8042_BASE         0x1fe00060
+
 #endif
