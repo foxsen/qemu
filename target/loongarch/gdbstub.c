@@ -24,6 +24,8 @@ int loongarch_cpu_gdb_read_register(CPUState *cs, GByteArray *mem_buf, int n)
         return gdb_get_regl(mem_buf, env->pc);
     } else if (n == 33) {
         return gdb_get_regl(mem_buf, env->badaddr);
+    } else if (n == 34) {
+        return gdb_get_regl(mem_buf, env->CSR_CRMD);
     }
     return 0;
 }

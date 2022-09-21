@@ -41,4 +41,5 @@
   <reg name="r31" bitsize="64" type="uint64" group="general"/>
   <reg name="pc" bitsize="64" type="code_ptr" group="general"/>
   <reg name="badv" bitsize="64" type="code_ptr" group="general"/>
+  <reg name="crmd" bitsize="64" type="uint64" group="general"/>
 </feature>
