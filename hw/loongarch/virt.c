@@ -16,6 +16,7 @@
 #include "sysemu/reset.h"
 #include "sysemu/rtc.h"
 #include "hw/loongarch/virt.h"
+#include "hw/acpi/ls7a-pm.h"
 #include "exec/address-spaces.h"
 #include "hw/irq.h"
 #include "net/net.h"
@@ -472,7 +473,7 @@ static DeviceState *create_platform_bus(DeviceState *pch_pic)
 
 static void loongarch_devices_init(DeviceState *pch_pic, LoongArchMachineState *lams)
 {
-    DeviceState *gpex_dev;
+    DeviceState *gpex_dev, *ls7a_pm;
     SysBusDevice *d;
     PCIBus *pci_bus;
     MemoryRegion *ecam_alias, *ecam_reg, *pio_alias, *pio_reg;
@@ -532,6 +533,9 @@ static void loongarch_devices_init(DeviceState *pch_pic, LoongArchMachineState *
         pci_nic_init_nofail(nd, pci_bus, nd->model, NULL);
     }
 
+    /* VGA setup */
+    //pci_vga_init(pci_bus);
+
     /*
      * There are some invalid guest memory access.
      * Create some unimplemented devices to emulate this.
@@ -541,6 +545,15 @@ static void loongarch_devices_init(DeviceState *pch_pic, LoongArchMachineState *
                          qdev_get_gpio_in(pch_pic,
                          VIRT_RTC_IRQ - VIRT_GSI_BASE));
     fdt_add_rtc_node(lams);
+
+    /* Init pm */
+    ls7a_pm = qdev_new(TYPE_LS7A_PM);
+    d = SYS_BUS_DEVICE(ls7a_pm);
+    sysbus_realize_and_unref(d, &error_fatal);
+    ls7a_pm_init(ls7a_pm, qdev_get_gpio_in(pch_pic,
+                                           ACPI_SCI_IRQ - VIRT_GSI_BASE));
+    memory_region_add_subregion(get_system_memory(), ACPI_IO_BASE, 
+                                sysbus_mmio_get_region(d,0));
 
     pm_mem = g_new(MemoryRegion, 1);
     memory_region_init_io(pm_mem, NULL, &loongarch_virt_pm_ops,

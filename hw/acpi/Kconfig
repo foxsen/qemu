@@ -78,3 +78,7 @@ config ACPI_ERST
 config ACPI_CXL
     bool
     depends on ACPI
+
+config ACPI_LOONGARCH
+    bool
+    select ACPI
