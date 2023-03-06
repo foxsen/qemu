@@ -11,6 +11,8 @@ loongarch_tcg_ss.add(files(
   'op_helper.c',
   'translate.c',
   'gdbstub.c',
+  'lsx_helper.c',
+  't_lsx_helper.c'
 ))
 loongarch_tcg_ss.add(zlib)
 

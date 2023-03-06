@@ -15,4 +15,6 @@
 #define TARGET_PAGE_BITS 14
 #define NB_MMU_MODES 5
 
+#define TARGET_LOONGARCH64_OABI 1
+
 #endif

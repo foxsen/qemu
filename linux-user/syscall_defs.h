@@ -450,7 +450,7 @@ struct target_dirent64 {
 #define TARGET_SIG_IGN	((abi_long)1)	/* ignore signal */
 #define TARGET_SIG_ERR	((abi_long)-1)	/* error return from signal */
 
-#ifdef TARGET_MIPS
+#if defined(TARGET_MIPS) || defined(TARGET_LOONGARCH64)
 #define TARGET_NSIG	   128
 #else
 #define TARGET_NSIG	   64
@@ -2199,6 +2199,30 @@ struct target_stat64 {
 #elif defined(TARGET_LOONGARCH64)
 
 /* LoongArch no newfstatat/fstat syscall. */
+
+#define TARGET_STAT_HAVE_NSEC
+struct target_stat {
+    abi_ulong st_dev;
+    abi_ulong st_ino;
+    unsigned int st_mode;
+    unsigned int st_nlink;
+    unsigned int st_uid;
+    unsigned int st_gid;
+    abi_ulong st_rdev;
+    abi_ulong __pad1;
+    abi_long st_size;
+    int st_blksize;
+    int __pad2;
+    abi_long st_blocks;
+    abi_long target_st_atime;
+    abi_ulong target_st_atime_nsec;
+    abi_long target_st_mtime;
+    abi_ulong target_st_mtime_nsec;
+    abi_long target_st_ctime;
+    abi_ulong target_st_ctime_nsec;
+    unsigned int __unused4;
+    unsigned int __unused5;
+};
 
 #else
 #error unsupported CPU
