@@ -12,6 +12,7 @@
 #include "fpu/softfloat.h"
 #include "internals.h"
 #include "tcg/tcg.h"
+#include "tcg/tcg-ldst.h"
 
 #define DO_HELPER_VVV(NAME, BIT, FUNC, ...)                   \
     void helper_##NAME(CPULoongArchState *env,                \
@@ -407,6 +408,7 @@ DO_HELPER_VVV(vssub_du, 64, helper_vvv, do_vssub_u)
 #define U_ODD_Q(a, bit) \
         ((((unsigned __int128)(a)) << (128 - bit)) >> (128 - bit / 2))
 
+#if 0
 static int64_t s_haddw_s(int64_t s1, int64_t s2,  int bit)
 {
     return S_ODD(s1, bit) + S_EVEN(s2, bit);
@@ -506,6 +508,7 @@ static void do_vhsubw_u(vec_t *Vd, vec_t *Vj, vec_t *Vk, int bit, int n)
         g_assert_not_reached();
     }
 }
+#endif
 
 //DO_HELPER_VVV(vhaddw_h_b, 16, helper_vvv, do_vhaddw_s)
 //DO_HELPER_VVV(vhaddw_w_h, 32, helper_vvv, do_vhaddw_s)
