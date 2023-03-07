@@ -534,7 +534,7 @@ static void loongarch_devices_init(DeviceState *pch_pic, LoongArchMachineState *
     }
 
     /* VGA setup */
-    //pci_vga_init(pci_bus);
+    pci_vga_init(pci_bus);
 
     /*
      * There are some invalid guest memory access.
