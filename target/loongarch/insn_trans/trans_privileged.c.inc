@@ -40,6 +40,26 @@ GEN_FALSE_TRANS(ertn)
 GEN_FALSE_TRANS(dbcl)
 GEN_FALSE_TRANS(idle)
 
+GEN_FALSE_TRANS(safecfgr_w)
+GEN_FALSE_TRANS(safecfgr_d)
+GEN_FALSE_TRANS(safecfgw_w)
+GEN_FALSE_TRANS(safecfgw_d)
+
+GEN_FALSE_TRANS(scfgr_w)
+GEN_FALSE_TRANS(scfgr_d)
+GEN_FALSE_TRANS(scfgw_w)
+GEN_FALSE_TRANS(scfgw_d)
+
+/*
+GEN_FALSE_TRANS(safememr_b)
+GEN_FALSE_TRANS(safememr_h)
+GEN_FALSE_TRANS(safememr_w)
+GEN_FALSE_TRANS(safememr_d)
+GEN_FALSE_TRANS(safememw_b)
+GEN_FALSE_TRANS(safememw_h)
+GEN_FALSE_TRANS(safememw_w)
+GEN_FALSE_TRANS(safememw_d)
+*/
 #else
 
 typedef void (*GenCSRRead)(TCGv dest, TCGv_ptr env);
@@ -332,6 +352,52 @@ TRANS(iocsrwr_b, gen_iocsrwr, gen_helper_iocsrwr_b)
 TRANS(iocsrwr_h, gen_iocsrwr, gen_helper_iocsrwr_h)
 TRANS(iocsrwr_w, gen_iocsrwr, gen_helper_iocsrwr_w)
 TRANS(iocsrwr_d, gen_iocsrwr, gen_helper_iocsrwr_d)
+
+static bool gen_safecfgr(DisasContext *ctx, arg_rr *a,
+                        void (*func)(TCGv, TCGv_ptr, TCGv))
+{
+    TCGv dest = gpr_dst(ctx, a->rd, EXT_NONE);
+    TCGv addr = gpr_src(ctx, a->rj, EXT_NONE);
+
+    if (check_plv(ctx)) {
+        return false;
+    }
+    func(dest, cpu_env, addr);
+    return true;
+}
+
+static bool gen_safecfgw(DisasContext *ctx, arg_rr *a,
+                        void (*func)(TCGv_ptr, TCGv, TCGv))
+{
+    TCGv val = gpr_src(ctx, a->rd, EXT_NONE);
+    TCGv addr = gpr_src(ctx, a->rj, EXT_NONE);
+
+    if (check_plv(ctx)) {
+        return false;
+    }
+    func(cpu_env, addr, val);
+    return true;
+}
+
+TRANS(safecfgr_w, gen_safecfgr, gen_helper_safecfgr_w)
+TRANS(safecfgr_d, gen_safecfgr, gen_helper_safecfgr_d)
+TRANS(safecfgw_w, gen_safecfgw, gen_helper_safecfgw_w)
+TRANS(safecfgw_d, gen_safecfgw, gen_helper_safecfgw_d)
+TRANS(scfgr_w, gen_safecfgr, gen_helper_safecfgr_w)
+TRANS(scfgr_d, gen_safecfgr, gen_helper_safecfgr_d)
+TRANS(scfgw_w, gen_safecfgw, gen_helper_safecfgw_w)
+TRANS(scfgw_d, gen_safecfgw, gen_helper_safecfgw_d)
+
+/*
+TRANS(safememr_b, gen_safecfgr, gen_helper_safememr_b)
+TRANS(safememr_h, gen_safecfgr, gen_helper_safememr_h)
+TRANS(safememr_w, gen_safecfgr, gen_helper_safememr_w)
+TRANS(safememr_d, gen_safecfgr, gen_helper_safememr_d)
+TRANS(safememw_b, gen_safecfgw, gen_helper_safememw_b)
+TRANS(safememw_h, gen_safecfgw, gen_helper_safememw_h)
+TRANS(safememw_w, gen_safecfgw, gen_helper_safememw_w)
+TRANS(safememw_d, gen_safecfgw, gen_helper_safememw_d)
+*/
 
 static void check_mmu_idx(DisasContext *ctx)
 {

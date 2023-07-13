@@ -22,6 +22,7 @@ loongarch_softmmu_ss.add(files(
   'constant_timer.c',
   'csr_helper.c',
   'iocsr_helper.c',
+  'safecfg_helper.c',
 ))
 
 loongarch_ss.add_all(when: 'CONFIG_TCG', if_true: [loongarch_tcg_ss])

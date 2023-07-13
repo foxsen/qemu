@@ -89,6 +89,29 @@ static bool trans_srai_w(DisasContext *ctx, arg_srai_w *a)
     return true;
 }
 
+static bool gen_slli_c(DisasContext *ctx, arg_rr_i *a,
+                      DisasExtend src_ext, DisasExtend dst_ext,
+                      void (*func)(TCGv, TCGv, target_long))
+{
+    if (a->rd == 0 && a->rj == 0 && a->imm == 4) {
+        /* is a safepop */
+        TCGv top = tcg_temp_new();
+        tcg_gen_ld32u_tl(top, cpu_env,
+                offsetof(CPULoongArchState, ssbuf_top));
+        tcg_gen_addi_tl(top, top, -8);
+        tcg_gen_st32_tl(top, cpu_env,
+                offsetof(CPULoongArchState, ssbuf_top));
+    } else {
+        TCGv dest = gpr_dst(ctx, a->rd, dst_ext);
+        TCGv src1 = gpr_src(ctx, a->rj, src_ext);
+
+        func(dest, src1, a->imm);
+        gen_set_gpr(a->rd, dest, dst_ext);
+    }
+
+    return true;
+}
+
 TRANS(sll_w, gen_rrr, EXT_ZERO, EXT_NONE, EXT_SIGN, gen_sll_w)
 TRANS(srl_w, gen_rrr, EXT_ZERO, EXT_NONE, EXT_SIGN, gen_srl_w)
 TRANS(sra_w, gen_rrr, EXT_SIGN, EXT_NONE, EXT_SIGN, gen_sra_w)
@@ -98,7 +121,8 @@ TRANS(sra_d, gen_rrr, EXT_NONE, EXT_NONE, EXT_NONE, gen_sra_d)
 TRANS(rotr_w, gen_rrr, EXT_ZERO, EXT_NONE, EXT_SIGN, gen_rotr_w)
 TRANS(rotr_d, gen_rrr, EXT_NONE, EXT_NONE, EXT_NONE, gen_rotr_d)
 TRANS(slli_w, gen_rri_c, EXT_NONE, EXT_SIGN, tcg_gen_shli_tl)
-TRANS(slli_d, gen_rri_c, EXT_NONE, EXT_NONE, tcg_gen_shli_tl)
+//TRANS(slli_d, gen_rri_c, EXT_NONE, EXT_NONE, tcg_gen_shli_tl)
+TRANS(slli_d, gen_slli_c, EXT_NONE, EXT_NONE, tcg_gen_shli_tl)
 TRANS(srli_w, gen_rri_c, EXT_ZERO, EXT_SIGN, tcg_gen_shri_tl)
 TRANS(srli_d, gen_rri_c, EXT_NONE, EXT_NONE, tcg_gen_shri_tl)
 TRANS(srai_d, gen_rri_c, EXT_NONE, EXT_NONE, tcg_gen_sari_tl)

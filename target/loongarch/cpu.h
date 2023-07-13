@@ -108,6 +108,13 @@ FIELD(FCSR0, CAUSE, 24, 5)
 #define  EXCCODE_BTE                 EXCODE(21, 0)
 #define  EXCCODE_DBP                 EXCODE(26, 0) /* Reserved subcode used for debug */
 
+#define EXCCODE_SSBAD		         EXCODE(0x19, 0x3) /* shadow stack bad return address */
+#define EXCCODE_SSOVF		         EXCODE(0x19, 0x4) /* shadow stack overflow */
+#define EXCCODE_SSUDF		         EXCODE(0x19, 0x5) /* shadow stack underflow */
+
+#define EXCCODE_SINST                EXCODE(0x19, 0x6) /* illegal security instruction access */
+#define EXCCODE_SDATA                EXCODE(0x19, 0x7) /* illegal security data access */
+
 /* cpucfg[0] bits */
 FIELD(CPUCFG0, PRID, 0, 32)
 
@@ -326,8 +333,17 @@ typedef struct CPUArchState {
     MemoryRegion iocsr_mem;
     bool load_elf;
     uint64_t elf_address;
+
+    /* safe configuration. Only shadow stack is implemented for now */
+    uint64_t ss_en;
+    uint64_t ssbuf_base;
+    uint32_t ssbuf_top;
+    uint32_t ssbuf_size;
+    #define SSBUF_SIZE 2048
+    uint64_t ssbuf[SSBUF_SIZE/8];
 #endif
 } CPULoongArchState;
+
 
 /**
  * LoongArchCPU:

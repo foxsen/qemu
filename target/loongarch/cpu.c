@@ -590,6 +590,13 @@ static void loongarch_cpu_init(Object *obj)
     memory_region_init_io(&env->iocsr_mem, OBJECT(cpu), &loongarch_qemu_ops,
                           NULL, "iocsr_misc", 0x428);
     memory_region_add_subregion(&env->system_iocsr, 0, &env->iocsr_mem);
+
+    /* initialize shadow stack data */
+    env->ss_en = 0;
+    env->ssbuf_base = 0;
+    env->ssbuf_top = 0;
+    env->ssbuf_size = SSBUF_SIZE;
+    memset(env->ssbuf, 0, SSBUF_SIZE);
 #endif
 }
 

@@ -661,6 +661,24 @@ INSN(ldpte,        j_i)
 INSN(ertn,         empty)
 INSN(idle,         i)
 INSN(dbcl,         i)
+INSN(safecfgr_w,   rr)
+INSN(safecfgr_d,   rr)
+INSN(safecfgw_w,   rr)
+INSN(safecfgw_d,   rr)
+INSN(scfgr_w,   rr)
+INSN(scfgr_d,   rr)
+INSN(scfgw_w,   rr)
+INSN(scfgw_d,   rr)
+/*
+INSN(safememr_b,   rr)
+INSN(safememr_h,   rr)
+INSN(safememr_w,   rr)
+INSN(safememr_d,   rr)
+INSN(safememw_b,   rr)
+INSN(safememw_h,   rr)
+INSN(safememw_w,   rr)
+INSN(safememw_d,   rr)
+*/
 
 #define output_fcmp(C, PREFIX, SUFFIX)                                         \
 {                                                                              \

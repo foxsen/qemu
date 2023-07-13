@@ -129,4 +129,20 @@ DEF_HELPER_4(lddir, tl, env, tl, tl, i32)
 DEF_HELPER_4(ldpte, void, env, tl, tl, i32)
 DEF_HELPER_1(ertn, void, env)
 DEF_HELPER_1(idle, void, env)
+
+DEF_HELPER_2(safecfgr_w, i64, env, tl)
+DEF_HELPER_2(safecfgr_d, i64, env, tl)
+DEF_HELPER_3(safecfgw_w, void, env, tl, tl)
+DEF_HELPER_3(safecfgw_d, void, env, tl, tl)
+
+/*
+DEF_HELPER_2(safememr_b, i64, env, tl)
+DEF_HELPER_2(safememr_h, i64, env, tl)
+DEF_HELPER_2(safememr_w, i64, env, tl)
+DEF_HELPER_2(safememr_d, i64, env, tl)
+DEF_HELPER_3(safememw_b, void, env, tl, tl)
+DEF_HELPER_3(safememw_h, void, env, tl, tl)
+DEF_HELPER_3(safememw_w, void, env, tl, tl)
+DEF_HELPER_3(safememw_d, void, env, tl, tl)
+*/
 #endif
