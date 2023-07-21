@@ -52,6 +52,9 @@ static const char * const excp_names[] = {
     [EXCCODE_FPE] = "Floating Point Exception",
     [EXCCODE_DBP] = "Debug breakpoint",
     [EXCCODE_BCE] = "Bound Check Exception",
+    [EXCCODE_SSOVF] = "Shadow Stack Buffer Overflow",
+    [EXCCODE_SSUDF] = "Shadow Stack Buffer Underflow",
+    [EXCCODE_SSBAD] = "Shadow Stack Buffer mismatch",
 };
 
 const char *loongarch_exception_name(int32_t exception)
@@ -198,6 +201,11 @@ static void loongarch_cpu_do_interrupt(CPUState *cs)
     case EXCCODE_PNR:
     case EXCCODE_PNX:
     case EXCCODE_PPI:
+    case EXCCODE_SSBAD:
+    case EXCCODE_SSOVF:
+    case EXCCODE_SSUDF:
+    case EXCCODE_SINST:
+    case EXCCODE_SDATA:
         cause = cs->exception_index;
         break;
     default:
