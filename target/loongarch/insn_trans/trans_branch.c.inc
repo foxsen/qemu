@@ -105,12 +105,15 @@ static bool trans_jirl(DisasContext *ctx, arg_jirl *a)
     TCGv dest = gpr_dst(ctx, a->rd, EXT_NONE);
     TCGv src1 = gpr_src(ctx, a->rj, EXT_NONE);
     int is_ret = (a->rd == 0 && a->rj == 1 && a->offs == 0) ? 1 : 0;
+    int is_jr = (a->rd == 0 && a->rj != 1 && a->offs == 0) ? 1 : 0;
 
     tcg_gen_addi_tl(cpu_pc, src1, a->offs);
     tcg_gen_movi_tl(dest, ctx->base.pc_next + 4);
     gen_set_gpr(a->rd, dest, EXT_NONE);
 
-    handle_shadow_stack(ctx, dest, src1, is_ret);
+    //zero as dest will trigger tcg assertion in tcg_gen_code
+    if (!is_jr) 
+        handle_shadow_stack(ctx, dest, src1, is_ret);
 
     tcg_gen_lookup_and_goto_ptr();
     ctx->base.is_jmp = DISAS_NORETURN;
