@@ -76,9 +76,10 @@ static void handle_shadow_stack(DisasContext *ctx, TCGv dest, TCGv src1, int is_
         tcg_gen_st32_tl(top, cpu_env,
                 offsetof(CPULoongArchState, ssbuf_top));
 
-        gen_set_label(l1);
         //goto end
         tcg_gen_brcond_tl(TCG_COND_EQ, top, top, end);
+
+        gen_set_label(l1);
 
         //stack full, raise overflow exception
         generate_exception(ctx, EXCCODE_SSOVF);
