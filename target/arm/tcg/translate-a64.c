@@ -13886,13 +13886,13 @@ static void aarch64_tr_init_disas_context(DisasContextBase *dcbase,
     dc->sme_excp_el = EX_TBFLAG_A64(tb_flags, SMEEXC_EL);
     dc->vl = (EX_TBFLAG_A64(tb_flags, VL) + 1) * 16;
     dc->svl = (EX_TBFLAG_A64(tb_flags, SVL) + 1) * 16;
-    dc->pauth_active = EX_TBFLAG_A64(tb_flags, PAUTH_ACTIVE);
+    dc->pauth_active = 0; //EX_TBFLAG_A64(tb_flags, PAUTH_ACTIVE);
     dc->bt = EX_TBFLAG_A64(tb_flags, BT);
     dc->btype = EX_TBFLAG_A64(tb_flags, BTYPE);
     dc->unpriv = EX_TBFLAG_A64(tb_flags, UNPRIV);
     dc->ata = EX_TBFLAG_A64(tb_flags, ATA);
-    dc->mte_active[0] = EX_TBFLAG_A64(tb_flags, MTE_ACTIVE);
-    dc->mte_active[1] = EX_TBFLAG_A64(tb_flags, MTE0_ACTIVE);
+    dc->mte_active[0] = 0; //EX_TBFLAG_A64(tb_flags, MTE_ACTIVE);
+    dc->mte_active[1] = 0; //EX_TBFLAG_A64(tb_flags, MTE0_ACTIVE);
     dc->pstate_sm = EX_TBFLAG_A64(tb_flags, PSTATE_SM);
     dc->pstate_za = EX_TBFLAG_A64(tb_flags, PSTATE_ZA);
     dc->sme_trap_nonstreaming = EX_TBFLAG_A64(tb_flags, SME_TRAP_NONSTREAMING);
