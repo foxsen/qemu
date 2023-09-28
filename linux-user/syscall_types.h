@@ -637,3 +637,49 @@ STRUCT(usbdevfs_disconnect_claim,
         TYPE_INT, /* flags */
         MK_ARRAY(TYPE_CHAR, USBDEVFS_MAXDRIVERNAME + 1)) /* driver */
 #endif /* CONFIG_USBFS */
+
+STRUCT(binder_write_read,
+        TYPE_ULONG, /* write_size */
+        TYPE_ULONG, /* write_consumed */
+        TYPE_PTRVOID, /* write_buffer */
+        TYPE_ULONG, /* read_size */
+        TYPE_ULONG, /* read_consumed */
+        TYPE_PTRVOID) /* read_buffer */
+
+STRUCT(binder_version,
+        TYPE_INT) /* protocol_version */
+
+STRUCT(binder_node_debug_info,
+        TYPE_PTRVOID, /* ptr */
+        TYPE_PTRVOID, /* cookie*/
+        TYPE_INT, /* has_strong_ref */
+        TYPE_INT) /* has_weak_ref */
+
+STRUCT(binder_node_info_for_ref,
+        TYPE_INT,
+        TYPE_INT,
+        TYPE_INT,
+        TYPE_INT,
+        TYPE_INT,
+        TYPE_INT)
+
+STRUCT(binder_freeze_info,
+        TYPE_INT,
+        TYPE_INT,
+        TYPE_INT)
+
+STRUCT(binder_frozen_status_info,
+        TYPE_INT,
+        TYPE_INT,
+        TYPE_INT)
+
+STRUCT(flat_binder_object,
+        TYPE_INT,
+        TYPE_INT,
+        TYPE_PTRVOID,
+        TYPE_PTRVOID)
+
+STRUCT(ashmem_pin,
+        TYPE_INT,
+        TYPE_INT)
+        

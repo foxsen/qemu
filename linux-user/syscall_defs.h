@@ -2750,4 +2750,29 @@ struct target_sched_param {
     abi_int sched_priority;
 };
 
+#define TARGET_BINDER_WRITE_READ       TARGET_IOWR('b', 1, struct binder_write_read)
+#define TARGET_BINDER_SET_IDLE_TIMEOUT     TARGET_IOW('b', 3, abi_long)
+#define TARGET_BINDER_SET_MAX_THREADS      TARGET_IOW('b', 5, abi_int)
+#define TARGET_BINDER_SET_IDLE_PRIORITY    TARGET_IOW('b', 6, abi_int)
+#define TARGET_BINDER_SET_CONTEXT_MGR      TARGET_IOW('b', 7, abi_int)
+#define TARGET_BINDER_THREAD_EXIT      TARGET_IOW('b', 8, abi_int)
+#define TARGET_BINDER_VERSION          TARGET_IOWR('b', 9, struct binder_version)
+#define TARGET_BINDER_GET_NODE_DEBUG_INFO  TARGET_IOWR('b', 11, struct binder_node_debug_info)
+#define TARGET_BINDER_GET_NODE_INFO_FOR_REF    TARGET_IOWR('b', 12, struct binder_node_info_for_ref)
+#define TARGET_BINDER_SET_CONTEXT_MGR_EXT  TARGET_IOW('b', 13, struct flat_binder_object)
+#define TARGET_BINDER_FREEZE           TARGET_IOW('b', 14, struct binder_freeze_info)
+#define TARGET_BINDER_GET_FROZEN_INFO      TARGET_IOWR('b', 15, struct binder_frozen_status_info)
+#define TARGET_BINDER_ENABLE_ONEWAY_SPAM_DETECTION TARGET_IOW('b', 16, abi_int)
+
+#define TARGET_ASHMEM_SET_NAME TARGET_IOW(__ASHMEMIOC, 1, char[ASHMEM_NAME_LEN])
+#define TARGET_ASHMEM_GET_NAME TARGET_IOR(__ASHMEMIOC, 2, char[ASHMEM_NAME_LEN])
+#define TARGET_ASHMEM_SET_SIZE TARGET_IOW(__ASHMEMIOC, 3, size_t)
+#define TARGET_ASHMEM_GET_SIZE TARGET_IO(__ASHMEMIOC, 4)
+#define TARGET_ASHMEM_SET_PROT_MASK TARGET_IOW(__ASHMEMIOC, 5, unsigned long)
+#define TARGET_ASHMEM_GET_PROT_MASK TARGET_IO(__ASHMEMIOC, 6)
+#define TARGET_ASHMEM_PIN TARGET_IOW(__ASHMEMIOC, 7, struct ashmem_pin)
+#define TARGET_ASHMEM_UNPIN TARGET_IOW(__ASHMEMIOC, 8, struct ashmem_pin)
+#define TARGET_ASHMEM_GET_PIN_STATUS TARGET_IO(__ASHMEMIOC, 9)
+#define TARGET_ASHMEM_PURGE_ALL_CACHES TARGET_IO(__ASHMEMIOC, 10)
+
 #endif

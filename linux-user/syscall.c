@@ -143,6 +143,8 @@
 #include "fd-trans.h"
 #include "tcg/tcg.h"
 #include "cpu_loop-common.h"
+#include "linux/android/binder.h"
+#include "ashmem.h"
 
 #ifndef CLONE_IO
 #define CLONE_IO                0x80000000      /* Clone io context */
@@ -3135,6 +3137,7 @@ static abi_long do_socket(int domain, int type, int protocol)
         return ret;
     }
 
+#if 0
     if (domain == PF_NETLINK && !(
 #ifdef CONFIG_RTNETLINK
          protocol == NETLINK_ROUTE ||
@@ -3143,6 +3146,7 @@ static abi_long do_socket(int domain, int type, int protocol)
          protocol == NETLINK_AUDIT)) {
         return -TARGET_EPROTONOSUPPORT;
     }
+#endif
 
     if (domain == AF_PACKET ||
         (domain == AF_INET && type == SOCK_PACKET)) {
@@ -3171,7 +3175,7 @@ static abi_long do_socket(int domain, int type, int protocol)
                 fd_trans_register(ret, &target_netlink_audit_trans);
                 break;
             default:
-                g_assert_not_reached();
+                //g_assert_not_reached();
             }
         }
     }
@@ -6356,6 +6360,11 @@ static abi_long do_prctl_inval1(CPUArchState *env, abi_long arg2)
 #define do_prctl_sme_set_vl do_prctl_inval1
 #endif
 
+#ifndef PR_SET_VMA
+#define PR_SET_VMA		0x53564d41
+#define PR_SET_VMA_ANON_NAME		0
+#endif
+
 static abi_long do_prctl(CPUArchState *env, abi_long option, abi_long arg2,
                          abi_long arg3, abi_long arg4, abi_long arg5)
 {
@@ -6396,6 +6405,18 @@ static abi_long do_prctl(CPUArchState *env, abi_long option, abi_long arg2,
             ret = get_errno(prctl(PR_SET_NAME, (uintptr_t)name,
                                   arg3, arg4, arg5));
             unlock_user(name, arg2, 0);
+            return ret;
+        }
+    case PR_SET_PTRACER:
+        {
+            ret = get_errno(prctl(PR_SET_PTRACER, arg2, arg3,
+                                  arg4, arg5));
+            return ret;
+        }
+    case PR_SET_VMA:
+        {
+            ret = get_errno(prctl(PR_SET_VMA, arg2, arg3,
+                                  arg4, arg5));
             return ret;
         }
     case PR_GET_FP_MODE:
@@ -8942,6 +8963,10 @@ _syscall2(int, pivot_root, const char *, new_root, const char *, put_old)
 #define __NR_sys_open_tree __NR_open_tree
 _syscall3(int, sys_open_tree, int, __dfd, const char *, __filename,
           unsigned int, __flags)
+#endif
+
+#if defined(TARGET_NR_bpf)
+_syscall3(int, bpf, int, cmd, void *, attr, unsigned int, size)
 #endif
 
 #if defined(TARGET_NR_move_mount) && defined(__NR_move_mount)
@@ -13609,6 +13634,13 @@ static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
 #if defined(TARGET_NR_riscv_hwprobe)
     case TARGET_NR_riscv_hwprobe:
         return do_riscv_hwprobe(cpu_env, arg1, arg2, arg3, arg4, arg5);
+#endif
+
+#if defined(TARGET_NR_bpf)
+    case TARGET_NR_bpf:
+        ret = bpf(arg1, (void*)arg2, arg3);
+        qemu_log_mask(LOG_UNIMP, "bpf syscall: %ld %lx %lx %lx\n", ret, arg1, arg2, arg3);
+        return ret;
 #endif
 
     default:
