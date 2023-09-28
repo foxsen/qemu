@@ -93,6 +93,8 @@ static bool enable_strace;
 static int last_log_mask;
 static const char *last_log_filename;
 
+extern char qemu_command_line[1024];
+
 /*
  * When running 32-on-64 we should make sure we can fit all of the possible
  * guest address space into a contiguous chunk of virtual host memory.
@@ -684,6 +686,7 @@ int main(int argc, char **argv, char **envp)
     int execfd;
     unsigned long max_reserved_va;
     bool preserve_argv0;
+    bool is_app = 0;
 
     error_init(argv[0]);
     module_call_init(MODULE_INIT_TRACE);
@@ -691,6 +694,15 @@ int main(int argc, char **argv, char **envp)
     module_call_init(MODULE_INIT_QOM);
 
     envlist = envlist_create();
+
+    sprintf(qemu_command_line, "%s %s\n", argv[1], argv[2]);
+#if 0
+    if ( strcmp(argv[1], "/system/bin/bpfloader") == 0 /*||
+         strcmp(argv[1], "/system/bin/app_process64") == 0*/)
+        is_app = true;
+#else
+    is_app = true;
+#endif
 
     /*
      * add current environment into the list
@@ -717,13 +729,19 @@ int main(int argc, char **argv, char **envp)
         }
     }
 
-    cpu_model = NULL;
+    //cpu_model = NULL;
+    cpu_model = "max";
 
     qemu_add_opts(&qemu_trace_opts);
     qemu_plugin_add_opts();
 
     optind = parse_args(argc, argv);
 
+    if (is_app) {
+        last_log_filename = "/home/foxsen/data/qemulog.%d";
+        //last_log_mask = qemu_str_to_log_mask("tid,strace,unimp,nochain,exec,cpu,in_asm");
+        last_log_mask = qemu_str_to_log_mask("tid,strace,unimp");
+    }
     qemu_set_log_filename_flags(last_log_filename,
                                 last_log_mask | (enable_strace * LOG_STRACE),
                                 &error_fatal);

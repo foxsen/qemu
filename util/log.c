@@ -87,6 +87,7 @@ static void qemu_log_thread_cleanup(Notifier *n, void *unused)
 
 /* Lock/unlock output. */
 
+char qemu_command_line[1024];
 static FILE *qemu_log_trylock_with_err(Error **errp)
 {
     FILE *logfile;
@@ -103,6 +104,7 @@ static FILE *qemu_log_trylock_with_err(Error **errp)
                                  filename, log_thread_id());
                 return NULL;
             }
+            fprintf(logfile, "%s\n", qemu_command_line);
             thread_file = logfile;
             qemu_log_thread_cleanup_notifier.notify = qemu_log_thread_cleanup;
             qemu_thread_atexit_add(&qemu_log_thread_cleanup_notifier);
