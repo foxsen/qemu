@@ -2521,7 +2521,7 @@ set_timeout:
     unimplemented:
         qemu_log_mask(LOG_UNIMP, "Unsupported setsockopt level=%d optname=%d\n",
                       level, optname);
-        ret = -TARGET_ENOPROTOOPT;
+        //ret = -TARGET_ENOPROTOOPT;
     }
     return ret;
 }
@@ -2803,7 +2803,7 @@ get_timeout:
             }
             break;
         default:
-            ret = -TARGET_ENOPROTOOPT;
+            //ret = -TARGET_ENOPROTOOPT;
             break;
         }
         break;
@@ -2865,7 +2865,7 @@ get_timeout:
             }
             break;
         default:
-            ret = -TARGET_ENOPROTOOPT;
+            //ret = -TARGET_ENOPROTOOPT;
             break;
         }
         break;
@@ -3147,6 +3147,8 @@ static abi_long do_socket(int domain, int type, int protocol)
         return -TARGET_EPROTONOSUPPORT;
     }
 #endif
+    if (domain == PF_NETLINK)
+         qemu_log(LOG_UNIMP, "netlink protocol %d, type=%d\n", protocol, type);
 
     if (domain == AF_PACKET ||
         (domain == AF_INET && type == SOCK_PACKET)) {
