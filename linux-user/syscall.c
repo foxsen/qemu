@@ -145,6 +145,7 @@
 #include "cpu_loop-common.h"
 #include "linux/android/binder.h"
 #include "ashmem.h"
+#include "linux/dma-heap.h"
 
 #ifndef CLONE_IO
 #define CLONE_IO                0x80000000      /* Clone io context */

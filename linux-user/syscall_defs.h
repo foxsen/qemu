@@ -2774,5 +2774,6 @@ struct target_sched_param {
 #define TARGET_ASHMEM_UNPIN TARGET_IOW(__ASHMEMIOC, 8, struct ashmem_pin)
 #define TARGET_ASHMEM_GET_PIN_STATUS TARGET_IO(__ASHMEMIOC, 9)
 #define TARGET_ASHMEM_PURGE_ALL_CACHES TARGET_IO(__ASHMEMIOC, 10)
+#define TARGET_DMA_HEAP_IOCTL_ALLOC TARGET_IOWR('H', 0, struct dma_heap_allocation_data)
 
 #endif

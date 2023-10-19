@@ -683,3 +683,10 @@ STRUCT(ashmem_pin,
         TYPE_INT,
         TYPE_INT)
         
+STRUCT(dma_heap_allocation_data,
+        TYPE_ULONG,
+        TYPE_INT,
+        TYPE_INT,
+        TYPE_ULONG)
+
+
