@@ -3148,7 +3148,7 @@ static abi_long do_socket(int domain, int type, int protocol)
     }
 #endif
     if (domain == PF_NETLINK)
-         qemu_log(LOG_UNIMP, "netlink protocol %d, type=%d\n", protocol, type);
+         qemu_log_mask(LOG_UNIMP, "netlink protocol %d, type=%d\n", protocol, type);
 
     if (domain == AF_PACKET ||
         (domain == AF_INET && type == SOCK_PACKET)) {
@@ -3180,6 +3180,8 @@ static abi_long do_socket(int domain, int type, int protocol)
                 //g_assert_not_reached();
             }
         }
+    } else {
+         qemu_log_mask(LOG_UNIMP, "socket netlink protocol %d, ret=%d\n", protocol, ret);
     }
     return ret;
 }
@@ -3284,6 +3286,7 @@ static abi_long do_sendrecvmsg_locked(int fd, struct target_msghdr *msgp,
     msg.msg_iov = vec;
 
     if (send) {
+
         if (fd_trans_target_to_host_data(fd)) {
             void *host_msg;
 
@@ -5599,7 +5602,11 @@ static abi_long do_ioctl(int fd, int cmd, abi_long arg)
     }
     arg_type = ie->arg_type;
     if (ie->do_ioctl) {
-        return ie->do_ioctl(ie, buf_temp, fd, cmd, arg);
+        ret = ie->do_ioctl(ie, buf_temp, fd, cmd, arg);
+        if (ret < 0) 
+            qemu_log_mask(
+                LOG_UNIMP, "ioctl ret %ld: cmd=0x%04lx\n", (long)ret, (long)cmd);
+        return ret;
     } else if (!ie->host_cmd) {
         /* Some architectures define BSD ioctls in their headers
            that are not implemented in Linux.  */
@@ -5664,6 +5671,9 @@ static abi_long do_ioctl(int fd, int cmd, abi_long arg)
         ret = -TARGET_ENOTTY;
         break;
     }
+    if (ret < 0) 
+        qemu_log_mask(
+                LOG_UNIMP, "ioctl ret1 %ld: cmd=0x%04lx\n", (long)ret, (long)cmd);
     return ret;
 }
 
@@ -7019,8 +7029,11 @@ static abi_long do_fcntl(int fd, int cmd, abi_ulong arg)
     abi_long ret;
     int host_cmd = target_to_host_fcntl_cmd(cmd);
 
-    if (host_cmd == -TARGET_EINVAL)
+    if (host_cmd == -TARGET_EINVAL) {
+        qemu_log_mask(
+                LOG_UNIMP, "fcntl : cmd=0x%04x\n", cmd);
 	    return host_cmd;
+    }
 
     switch(cmd) {
     case TARGET_F_GETLK:
@@ -7128,6 +7141,10 @@ static abi_long do_fcntl(int fd, int cmd, abi_ulong arg)
     default:
         ret = get_errno(safe_fcntl(fd, cmd, arg));
         break;
+    }
+    if (ret < 0) {
+        qemu_log_mask(
+                LOG_UNIMP, "fcntl ret %ld\n", ret);
     }
     return ret;
 }
@@ -8970,6 +8987,35 @@ _syscall3(int, sys_open_tree, int, __dfd, const char *, __filename,
 #if defined(TARGET_NR_bpf)
 _syscall3(int, bpf, int, cmd, void *, attr, unsigned int, size)
 #endif
+
+#if defined(TARGET_NR_add_key)
+_syscall5(int, add_key, const char *, type, const char *, desc, 
+          const void*, payload, size_t, plen,
+          int, keyring);
+#endif
+
+#if defined(TARGET_NR_request_key)
+_syscall4(int, request_key, const char *, _type,
+        const char *, _description,
+        const char *, _callout_info,
+        int, destringid)
+#endif
+
+#if defined(TARGET_NR_keyctl)
+_syscall5(long, keyctl, int, option, unsigned long, arg2, unsigned long, arg3,
+        unsigned long, arg4, unsigned long, arg5)
+#endif
+
+#if defined(TARGET_NR_process_vm_readv)
+safe_syscall6(long, process_vm_readv, int, pid, unsigned long, arg2, unsigned long, arg3,
+        unsigned long, arg4, unsigned long, arg5, unsigned long, arg6)
+#endif
+
+#if defined(TARGET_NR_process_vm_writev)
+safe_syscall6(long, process_vm_writev, int, pid, unsigned long, arg2, unsigned long, arg3,
+        unsigned long, arg4, unsigned long, arg5, unsigned long, arg6)
+#endif
+
 
 #if defined(TARGET_NR_move_mount) && defined(__NR_move_mount)
 #define __NR_sys_move_mount __NR_move_mount
@@ -13642,6 +13688,42 @@ static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
     case TARGET_NR_bpf:
         ret = bpf(arg1, (void*)arg2, arg3);
         qemu_log_mask(LOG_UNIMP, "bpf syscall: %ld %lx %lx %lx\n", ret, arg1, arg2, arg3);
+        return ret;
+#endif
+
+#if defined(TARGET_NR_add_key)
+    case TARGET_NR_add_key:
+        ret = add_key((const char*)arg1, (const char*)arg2,
+                      (const void*)arg3, (size_t)arg4,
+                      (int)arg5);
+        return ret;
+#endif
+
+#if defined(TARGET_NR_request_key)
+    case TARGET_NR_request_key:
+        ret = request_key((const char*)arg1, (const char*)arg2,
+                          (const char*)arg3, (int)arg4);
+        return ret;
+#endif
+
+#if defined(TARGET_NR_keyctl)
+    case TARGET_NR_keyctl:
+        ret = keyctl((int)arg1, (unsigned long)arg2, (unsigned long)arg3,
+                     (unsigned long)arg4, (unsigned long)arg5);
+        return ret;
+#endif
+
+#if defined(TARGET_NR_process_vm_readv)
+    case TARGET_NR_process_vm_readv:
+        ret = safe_process_vm_readv((int)arg1, (unsigned long)arg2, (unsigned long)arg3,
+                     (unsigned long)arg4, (unsigned long)arg5, (unsigned long)arg6);
+        return ret;
+#endif
+
+#if defined(TARGET_NR_process_vm_writev)
+    case TARGET_NR_process_vm_writev:
+        ret = safe_process_vm_writev((int)arg1, (unsigned long)arg2, (unsigned long)arg3,
+                     (unsigned long)arg4, (unsigned long)arg5, (unsigned long)arg6);
         return ret;
 #endif
 
