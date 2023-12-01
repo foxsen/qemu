@@ -697,7 +697,7 @@ int main(int argc, char **argv, char **envp)
 
     sprintf(qemu_command_line, "%s %s\n", argv[1], argv[2]);
 #if 0
-    if ( strcmp(argv[1], "/system/bin/dalvik64") == 0 ||
+    if ( strcmp(argv[1], "/init") == 0 ||
          strcmp(argv[1], "/apex/com.android.art/bin/dalvikvm64") == 0 )
         is_app = true;
 #else
@@ -740,7 +740,7 @@ int main(int argc, char **argv, char **envp)
     if (is_app) {
         last_log_filename = "/home/foxsen/data/qemulog.%d";
         //last_log_mask = qemu_str_to_log_mask("tid,strace,unimp,nochain,exec,cpu,in_asm");
-        last_log_mask = qemu_str_to_log_mask("tid,unimp");
+        last_log_mask = qemu_str_to_log_mask("tid,strace");
         //gdbstub = g_strdup("1234");
     }
     qemu_set_log_filename_flags(last_log_filename,

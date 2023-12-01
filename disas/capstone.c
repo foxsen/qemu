@@ -148,7 +148,7 @@ static void cap_dump_insn(disassemble_info *info, cs_insn *insn)
     FILE *stream = info->stream;
     int i, n, split;
 
-    print(stream, "0x%08" PRIx64 ": ", insn->address);
+    //print(stream, "0x%08" PRIx64 ": ", insn->address);
 
     n = insn->size;
     split = info->cap_insn_split;
