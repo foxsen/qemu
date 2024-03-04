@@ -32,6 +32,9 @@ pci_ss.add(when: 'CONFIG_VERSATILE_PCI', if_true: files('versatile.c'))
 specific_ss.add(when: 'CONFIG_ASTRO', if_true: files('astro.c'))
 pci_ss.add(when: 'CONFIG_DINO', if_true: files('dino.c'))
 
+# Loongson 2k pcie controller
+pci_ss.add(when: 'CONFIG_PCI_LS2K', if_true: files('ls2k.c'))
+
 system_ss.add_all(when: 'CONFIG_PCI', if_true: pci_ss)
 
 specific_ss.add(when: 'CONFIG_PCI_POWERNV', if_true: files(

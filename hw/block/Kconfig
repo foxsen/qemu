@@ -44,3 +44,6 @@ config VHOST_USER_BLK
 
 config SWIM
     bool
+
+config LS_NAND
+    bool

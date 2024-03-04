@@ -96,3 +96,8 @@ config GT64120
     select PCI
     select EMPTY_SLOT
     select I8259
+
+#config PCI_LS2K
+#    bool
+#    select PCI
+

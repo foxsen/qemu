@@ -20,3 +20,16 @@ config LOONGARCH_VIRT
     select DIMM
     select PFLASH_CFI01
     select ACPI_HMAT
+
+config LOONGARCH_2K1000
+    bool
+    select PCI
+    select PCI_EXPRESS_GENERIC_BRIDGE
+    imply PCI_DEVICES
+    imply NVDIMM
+    select SERIAL
+    select LOONGARCH_IPI
+    select LS7A_RTC
+    select SMBIOS
+    select DIMM
+    select PFLASH_CFI01
