@@ -334,7 +334,11 @@ typedef struct CPUArchState {
     bool load_elf;
     uint64_t elf_address;
 
-    /* safe configuration. Only shadow stack is implemented for now */
+    /* safe configuration. Only safe instruction area and shadow stack is implemented for now */
+    uint64_t si_table_en;
+    bool si_valid[64];
+    uint64_t si_cfg[64];
+    uint64_t si_bitmap[64];
     uint64_t ss_en;
     uint64_t ssbuf_base;
     uint32_t ssbuf_top;

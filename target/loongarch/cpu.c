@@ -54,7 +54,7 @@ static const char * const excp_names[] = {
     [EXCCODE_BCE] = "Bound Check Exception",
     [EXCCODE_SSOVF] = "Shadow Stack Buffer Overflow",
     [EXCCODE_SSUDF] = "Shadow Stack Buffer Underflow",
-    [EXCCODE_SSBAD] = "Shadow Stack Buffer mismatch",
+    [EXCCODE_SSBAD] = "Shadow Stack Buffer Mismatch",
 };
 
 const char *loongarch_exception_name(int32_t exception)
@@ -148,6 +148,7 @@ static void loongarch_cpu_do_interrupt(CPUState *cs)
     int cause = -1;
     const char *name;
     bool tlbfill = FIELD_EX64(env->CSR_TLBRERA, CSR_TLBRERA, ISTLBR);
+    bool safeex = EXCODE_MCODE(cs->exception_index) == 0x19;
     uint32_t vec_size = FIELD_EX64(env->CSR_ECFG, CSR_ECFG, VS);
 
     if (cs->exception_index != EXCCODE_INT) {
@@ -269,6 +270,8 @@ static void loongarch_cpu_do_interrupt(CPUState *cs)
     } else {
         if (tlbfill) {
             env->pc = env->CSR_TLBRENTRY;
+        } else if (safeex) {
+            env->pc = 0x1c001000;
         } else {
             env->pc = env->CSR_EENTRY;
             env->pc += EXCODE_MCODE(cause) * vec_size;
@@ -503,6 +506,16 @@ static void loongarch_cpu_reset(DeviceState *dev)
     env->CSR_PRCFG3 = FIELD_DP64(env->CSR_PRCFG3, CSR_PRCFG3, STLB_WAYS, 7);
     env->CSR_PRCFG3 = FIELD_DP64(env->CSR_PRCFG3, CSR_PRCFG3, STLB_SETS, 8);
 
+    /* initialize safe configuration data */
+    env->si_table_en = 0;
+    memset(env->si_valid, 0, sizeof(bool) * 64);
+    memset(env->si_bitmap, 0, sizeof(uint64_t) * 64);
+    env->ss_en = 0;
+    env->ssbuf_base = 0;
+    env->ssbuf_top = 0;
+    env->ssbuf_size = SSBUF_SIZE;
+    memset(env->ssbuf, 0, SSBUF_SIZE);
+
     for (n = 0; n < 4; n++) {
         env->CSR_DMW[n] = FIELD_DP64(env->CSR_DMW[n], CSR_DMW, PLV0, 0);
         env->CSR_DMW[n] = FIELD_DP64(env->CSR_DMW[n], CSR_DMW, PLV1, 0);
@@ -598,13 +611,6 @@ static void loongarch_cpu_init(Object *obj)
     memory_region_init_io(&env->iocsr_mem, OBJECT(cpu), &loongarch_qemu_ops,
                           NULL, "iocsr_misc", 0x428);
     memory_region_add_subregion(&env->system_iocsr, 0, &env->iocsr_mem);
-
-    /* initialize shadow stack data */
-    env->ss_en = 0;
-    env->ssbuf_base = 0;
-    env->ssbuf_top = 0;
-    env->ssbuf_size = SSBUF_SIZE;
-    memset(env->ssbuf, 0, SSBUF_SIZE);
 #endif
 }
 

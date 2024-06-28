@@ -6,6 +6,8 @@
  */
 
 #include "cpu-csr.h"
+#include "tcg/tcg-op.h"
+#include "tcg/tcg.h"
 
 #ifdef CONFIG_USER_ONLY
 
@@ -358,10 +360,16 @@ static bool gen_safecfgr(DisasContext *ctx, arg_rr *a,
 {
     TCGv dest = gpr_dst(ctx, a->rd, EXT_NONE);
     TCGv addr = gpr_src(ctx, a->rj, EXT_NONE);
+    TCGv temp = tcg_temp_local_new();
 
     if (check_plv(ctx)) {
         return false;
     }
+
+    // update safe instruction pc to env
+    tcg_gen_movi_tl(temp, ctx->base.pc_next);
+    tcg_gen_st_tl(temp, cpu_env, offsetof(CPULoongArchState, pc));
+
     func(dest, cpu_env, addr);
     return true;
 }
@@ -371,10 +379,16 @@ static bool gen_safecfgw(DisasContext *ctx, arg_rr *a,
 {
     TCGv val = gpr_src(ctx, a->rd, EXT_NONE);
     TCGv addr = gpr_src(ctx, a->rj, EXT_NONE);
+    TCGv temp = tcg_temp_local_new();
 
     if (check_plv(ctx)) {
         return false;
     }
+
+    // update safe instruction pc to env
+    tcg_gen_movi_tl(temp, ctx->base.pc_next);
+    tcg_gen_st_tl(temp, cpu_env, offsetof(CPULoongArchState, pc));
+    
     func(cpu_env, addr, val);
     return true;
 }
