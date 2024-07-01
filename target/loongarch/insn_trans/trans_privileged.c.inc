@@ -49,6 +49,7 @@ GEN_FALSE_TRANS(scfgr_w)
 GEN_FALSE_TRANS(scfgr_d)
 GEN_FALSE_TRANS(scfgw_w)
 GEN_FALSE_TRANS(scfgw_d)
+GEN_FALSE_TRANS(spop)
 
 /*
 GEN_FALSE_TRANS(safememr_b)
@@ -376,6 +377,22 @@ static bool gen_safecfgw(DisasContext *ctx, arg_rr *a,
         return false;
     }
     func(cpu_env, addr, val);
+    return true;
+}
+
+static bool trans_spop(DisasContext *ctx, arg_rr *a)
+{
+    if (check_plv(ctx)) {
+        return false;
+    }
+    
+    /* is a safepop */
+    TCGv top = tcg_temp_new();
+    tcg_gen_ld32u_tl(top, cpu_env,
+            offsetof(CPULoongArchState, ssbuf_top));
+    tcg_gen_addi_tl(top, top, 8);
+    tcg_gen_st32_tl(top, cpu_env,
+            offsetof(CPULoongArchState, ssbuf_top));
     return true;
 }
 

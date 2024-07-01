@@ -669,6 +669,7 @@ INSN(scfgr_w,   rr)
 INSN(scfgr_d,   rr)
 INSN(scfgw_w,   rr)
 INSN(scfgw_d,   rr)
+INSN(spop,      rr)
 /*
 INSN(safememr_b,   rr)
 INSN(safememr_h,   rr)

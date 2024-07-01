@@ -19,8 +19,6 @@ uint64_t helper_safecfgr_w(CPULoongArchState *env, target_ulong addr)
     uint64_t val;
     if (addr == 0) {
 	    val = env->ss_en;
-    } else if (addr == 8) {
-	    val = env->ssbuf_size;
     } else if (addr == 0x20) {
 	    val = env->ssbuf_base;
     } else if (addr == 0x28) {
