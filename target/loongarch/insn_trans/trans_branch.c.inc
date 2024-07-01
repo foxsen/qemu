@@ -16,10 +16,6 @@ static void handle_shadow_stack(DisasContext *ctx, TCGv dest, TCGv src1, int is_
     TCGv top = tcg_temp_local_new();
     TCGLabel *end = gen_new_label();
 
-    if (ctx->plv == MMU_PLV_USER) {
-        return;
-    } 
-
     tcg_gen_ld_tl(tmp, cpu_env,
             offsetof(CPULoongArchState, ss_en));
     //is shadow stack enabled?
@@ -31,13 +27,15 @@ static void handle_shadow_stack(DisasContext *ctx, TCGv dest, TCGv src1, int is_
     if (is_ret) {
         TCGLabel *l1 = gen_new_label();
         TCGLabel *l2 = gen_new_label();
-        //is shadow stack empty? top <= zero means empty
-        tcg_gen_brcond_tl(TCG_COND_LE, top, ctx->zero, l1);
+
+        //is shadow stack empty? top >= size means empty
+        tcg_gen_movi_tl(tmp, SSBUF_SIZE);
+        tcg_gen_brcond_tl(TCG_COND_GE, top, tmp, l1);
 
         // not empty, pop shadow stack and check
-        // load current entry from safecfg addr 0x100000 - top
-        tcg_gen_movi_tl(tmp, 0x100000);
-        tcg_gen_sub_tl(tmp, tmp, top);
+        // load current entry from safecfg addr 0xff800 + top
+        tcg_gen_movi_tl(tmp, 0xff800);
+        tcg_gen_add_tl(tmp, tmp, top);
         gen_helper_safecfgr_d(tmp, cpu_env, tmp);
 
         // ss entry val equal to ra?
@@ -50,10 +48,10 @@ static void handle_shadow_stack(DisasContext *ctx, TCGv dest, TCGv src1, int is_
         generate_exception(ctx, EXCCODE_SSUDF);
 
         gen_set_label(l2);
-        // succeed. top = top - 8
+        // succeed. top = top + 8
         tcg_gen_ld32u_tl(top, cpu_env,
             offsetof(CPULoongArchState, ssbuf_top));
-        tcg_gen_addi_tl(top, top, -8);
+        tcg_gen_addi_tl(top, top, 8);
         tcg_gen_st32_tl(top, cpu_env,
                 offsetof(CPULoongArchState, ssbuf_top));
     } else {
@@ -61,18 +59,19 @@ static void handle_shadow_stack(DisasContext *ctx, TCGv dest, TCGv src1, int is_
 
         tcg_gen_movi_tl(tmp, SSBUF_SIZE);
 
-        //is shadow stack full? top >= size means full 
-        tcg_gen_brcond_tl(TCG_COND_GE, top, tmp, l1);
+        //is shadow stack full? top <= zero means full
+        tcg_gen_brcond_tl(TCG_COND_LE, top, ctx->zero, l1);
 
         // save current ra
-        tcg_gen_movi_tl(tmp, 0xffff8);
-        tcg_gen_sub_tl(tmp, tmp, top);
+        tcg_gen_addi_tl(top, top, -8);
+        tcg_gen_movi_tl(tmp, 0xff800);
+        tcg_gen_add_tl(tmp, tmp, top);
         gen_helper_safecfgw_d(cpu_env, tmp, dest);
 
         // helper might destroy top, reload
         tcg_gen_ld32u_tl(top, cpu_env,
             offsetof(CPULoongArchState, ssbuf_top));
-        tcg_gen_addi_tl(top, top, 8);
+        tcg_gen_addi_tl(top, top, -8);
         tcg_gen_st32_tl(top, cpu_env,
                 offsetof(CPULoongArchState, ssbuf_top));
 

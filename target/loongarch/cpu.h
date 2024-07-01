@@ -338,7 +338,6 @@ typedef struct CPUArchState {
     uint64_t ss_en;
     uint64_t ssbuf_base;
     uint32_t ssbuf_top;
-    uint32_t ssbuf_size;
     #define SSBUF_SIZE 2048
     uint64_t ssbuf[SSBUF_SIZE/8];
 #endif

@@ -602,8 +602,7 @@ static void loongarch_cpu_init(Object *obj)
     /* initialize shadow stack data */
     env->ss_en = 0;
     env->ssbuf_base = 0;
-    env->ssbuf_top = 0;
-    env->ssbuf_size = SSBUF_SIZE;
+    env->ssbuf_top = SSBUF_SIZE;
     memset(env->ssbuf, 0, SSBUF_SIZE);
 #endif
 }
