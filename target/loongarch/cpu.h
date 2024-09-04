@@ -352,6 +352,19 @@ typedef struct CPUArchState {
     uint64_t CSR_DERA;
     uint64_t CSR_DSAVE;
 
+    uint64_t CSR_MWPC;
+    uint64_t CSR_MWPS;
+
+    uint64_t CSR_WP0ADDR;
+    uint64_t CSR_WP0MASK;
+    uint64_t CSR_WP0CTL;
+    uint64_t CSR_WP0ASID;
+
+    uint64_t CSR_WP1ADDR;
+    uint64_t CSR_WP1MASK;
+    uint64_t CSR_WP1CTL;
+    uint64_t CSR_WP1ASID;
+
 #ifndef CONFIG_USER_ONLY
     LoongArchTLB  tlb[LOONGARCH_TLB_MAX];
 

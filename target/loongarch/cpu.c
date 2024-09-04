@@ -66,6 +66,7 @@ static const char * const excp_names[] = {
     [EXCCODE_BCE] = "Bound Check Exception",
     [EXCCODE_SXD] = "128 bit vector instructions Disable exception",
     [EXCCODE_ASXD] = "256 bit vector instructions Disable exception",
+    [EXCCODE_WPEM] = "watchpoint exception",
 };
 
 const char *loongarch_exception_name(int32_t exception)
@@ -208,6 +209,7 @@ static void loongarch_cpu_do_interrupt(CPUState *cs)
     case EXCCODE_FPE:
     case EXCCODE_SXD:
     case EXCCODE_ASXD:
+    case EXCCODE_WPEM:
         env->CSR_BADV = env->pc;
         QEMU_FALLTHROUGH;
     case EXCCODE_BCE:
@@ -458,6 +460,8 @@ static void loongarch_la464_initfn(Object *obj)
     env->cpucfg[20] = data;
 
     env->CSR_ASID = FIELD_DP64(0, CSR_ASID, ASIDBITS, 0xa);
+
+    env->CSR_MWPC = LOONGARCH_WATCHPOINT_NUMBER;
     loongarch_cpu_post_init(obj);
 }
 
@@ -634,6 +638,13 @@ static void loongarch_cpu_reset_hold(Object *obj)
         env->CSR_DMW[n] = FIELD_DP64(env->CSR_DMW[n], CSR_DMW, PLV1, 0);
         env->CSR_DMW[n] = FIELD_DP64(env->CSR_DMW[n], CSR_DMW, PLV2, 0);
         env->CSR_DMW[n] = FIELD_DP64(env->CSR_DMW[n], CSR_DMW, PLV3, 0);
+    }
+
+    for (n = 0; n < LOONGARCH_WATCHPOINT_NUMBER; n++) {
+        env->CSR_WP[n][0] = 0;
+        env->CSR_WP[n][1] = 0;
+        env->CSR_WP[n][2] = 0;
+        env->CSR_WP[n][3] = 0;
     }
 
 #ifndef CONFIG_USER_ONLY
@@ -820,6 +831,34 @@ void loongarch_cpu_dump_state(CPUState *cs, FILE *f, int flags)
 #ifdef CONFIG_TCG
 #include "hw/core/tcg-cpu-ops.h"
 
+void loongarch_cpu_debug_excp_handler(CPUState *cs)
+{
+    LOONGARCHCPU *cpu = LOONGARCH_CPU(cs);
+    CPULOONGARCHState *env = &cpu->env;
+
+    if (cs->watchpoint_hit) {
+        if (cs->watchpoint_hit->flags & BP_CPU) {
+            do_raise_exception(env, EXCCODE_WPEM, 0);
+        }
+    } else {
+        if (cpu_breakpoint_test(cs, env->pc, BP_CPU)) {
+            do_raise_exception(env, EXCCODE_BRK, 0);
+        }
+    }
+}
+
+bool loongarch_cpu_debug_check_breakpoint(CPUState *cs)
+{
+    LOONGARCHCPU *cpu = LOONGARCH_CPU(cs);
+    CPULOONGARCHState *env = &cpu->env;
+}
+
+bool loongarch_cpu_debug_check_watchpoint(CPUState *cs, CPUWatchpoint *wp)
+{
+    LOONGARCHCPU *cpu = LOONGARCH_CPU(cs);
+    CPULOONGARCHState *env = &cpu->env;
+}
+
 static struct TCGCPUOps loongarch_tcg_ops = {
     .initialize = loongarch_translate_init,
     .synchronize_from_tb = loongarch_cpu_synchronize_from_tb,
@@ -830,6 +869,9 @@ static struct TCGCPUOps loongarch_tcg_ops = {
     .cpu_exec_interrupt = loongarch_cpu_exec_interrupt,
     .do_interrupt = loongarch_cpu_do_interrupt,
     .do_transaction_failed = loongarch_cpu_do_transaction_failed,
+    .debug_excp_handler = loongarch_cpu_debug_excp_handler,
+    .debug_check_breakpoint = loongarch_cpu_debug_check_breakpoint,
+    .debug_check_watchpoint = loongarch_cpu_debug_check_watchpoint,
 #endif
 };
 #endif /* CONFIG_TCG */

@@ -194,6 +194,22 @@ FIELD(CSR_DMW_32, PSEG, 25, 3)
 FIELD(CSR_DMW_32, VSEG, 29, 3)
 FIELD(CSR_DMW_64, VSEG, 60, 4)
 
+/* Watch CSRs */
+#define LOONGARCH_WATCHPOINT_NUMBER            2
+
+#define LOONGARCH_CSR_MWPC           0x300 /* watchpoint config */
+#define LOONGARCH_CSR_MWPS           0x301 /* watchpoint status */
+
+#define LOONGARH_CSR_WP0ADDR         0X310
+#define LOONGARH_CSR_WP0MASK         0X311
+#define LOONGARH_CSR_WP0CTL          0X312
+#define LOONGARH_CSR_WP0ASID         0X313
+
+#define LOONGARH_CSR_WP1ADDR         0X318
+#define LOONGARH_CSR_WP1MASK         0X319
+#define LOONGARH_CSR_WP1CTL          0X31a
+#define LOONGARH_CSR_WP1ASID         0X31b
+
 /* Debug CSRs */
 #define LOONGARCH_CSR_DBG            0x500 /* debug config */
 FIELD(CSR_DBG, DST, 0, 1)
