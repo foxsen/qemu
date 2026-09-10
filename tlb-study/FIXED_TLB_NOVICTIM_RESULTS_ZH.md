@@ -63,22 +63,50 @@ guest THP 场景的 named SoftMMU 为 95.73% 和 94.88%，中位数 95.31%；4 K
 ### 固定宿主条件下的 cache 对照
 
 同一环境下另做了不附着 perf 的 5 次 timing，对 LP、PTW 和二者同时启用进行
-直接比较。表中为中位数；加速比为 base 除以候选值。
+直接比较。该 timing build 已将 cache lookup/hit 原子计数限制在
+`QEMU_TLB_PROFILE` 构建，因而以下数据取代早期含计数开销的表。表中为中位数；
+括号内为相对 base 的加速比。
 
 | guest page | base | LP | PTW | LP+PTW |
 |---|---:|---:|---:|---:|
-| THP | 333.775 ns（1.000x） | 251.789 ns（1.326x） | 348.535 ns（0.958x） | 253.236 ns（1.318x） |
-| 4 KiB | 355.010 ns（1.000x） | 359.754 ns（0.987x） | 335.175 ns（1.059x） | 335.991 ns（1.057x） |
+| THP | 306.698 ns（1.000x） | 219.177 ns（1.399x） | 311.741 ns（0.984x） | 218.849 ns（1.401x） |
+| 4 KiB | 314.947 ns（1.000x） | 317.663 ns（0.991x） | 295.490 ns（1.066x） | 295.954 ns（1.064x） |
 
-THP 下 LP 的命中/查询中位数为 98.40%，LP+PTW 的结果基本由 LP 决定；4 KiB
-下 LP 命中率仅约 0.014%，而 PTW 有效查询几乎全部命中，组合结果基本由 PTW
-决定。二者同时启用没有超过单独启用匹配该页大小的 cache：THP 慢约 0.57%，
-4 KiB 慢约 0.24%，符合额外无效查询带来少量成本的解释。
+独立 profile 运行中，THP 下 LP 命中约 412.9 万次，将约 419.5 万次 refill 降到
+约 6.6 万；4 KiB 下 PTW L2 约命中 419.5 万次。组合结果仍由适配页模式的 cache
+决定：相对单独 LP，THP 下 both 快约 0.15%；相对单独 PTW，4 KiB 下 both 慢约
+0.16%，均远小于 1%。
 
-除 4 KiB base 的一次 390.814 ns/access 离群值外，各组标准差/均值为
-0.34%--1.34%；base THP 为 0.41%。中位数不受该离群点影响。相比先前未固定
-宿主条件的数据，这组结果支持将较大波动主要归因于频率、调度和共享物理核干扰，
-但未离线 SMT sibling，因此不能声称已经完全消除宿主噪声。
+八组 CV 为 0.19%--1.22%。相比先前未固定宿主条件的数据，这组结果支持将较大
+波动主要归因于频率、调度和共享物理核干扰，但未离线 SMT sibling，因此不能声称
+已经完全消除宿主噪声。满载 `turbostat` 复核 CPU 7 的 Bzy_MHz 为 2091 MHz，
+接近请求的 2.1 GHz。
+
+## 无统计开销的系统负载优化结果
+
+六个 workload 的 baseline、LP、PTW、LP+PTW 均来自同一 QEMU binary；除 stress
+补到 5 次外，每组重复 3 次并随机化执行顺序。sysbench、DaCapo 和 nested 分别使用
+MiB/s、guest 自报毫秒和内层 ns/access；`mcf`/GAPBS 使用测量窗墙钟。表中括号为
+样本 CV；命中率来自独立的一次 profile 运行。
+
+| workload | LP ratio（CV；命中） | PTW ratio（CV；命中） | LP+PTW ratio（CV；LP/PTW 命中） |
+|---|---:|---:|---:|
+| sysbench | 1.000x（0.07%；2.35%） | 0.995x（0.66%；67.78%） | 0.998x（0.68%；32.58%/73.94%） |
+| stress-ng | 1.026x（1.63%；17.96%） | 1.060x（3.46%；79.91%） | 1.089x（2.64%；19.22%/90.73%） |
+| DaCapo `avrora` | 1.022x（5.79%；33.00%） | 0.995x（1.03%；65.97%） | 1.068x（4.66%；26.09%/98.93%） |
+| SPEC `429.mcf` | 1.060x（7.76%；68.55%） | 0.995x（2.03%；56.51%） | 1.069x（7.10%；67.96%/99.81%） |
+| GAPBS PR | 0.997x（3.74%；81.35%） | 1.010x（5.62%；59.04%） | 1.006x（0.79%；78.65%/95.42%） |
+| nested hotspot | 2.229x（7.97%；49.87%） | 1.106x（6.72%；52.49%） | 2.198x（3.64%；47.62%/58.15%） |
+
+系统结果仍不支持通用端到端加速。sysbench/GAPBS 没有明显变化；DaCapo both 与
+`mcf` LP/both 有约 6%--7% 的正信号，但 CV 也达到 4.7%--7.8%。尤其 DaCapo 与
+`mcf` 的 PTW 命中率分别为 65.97% 和 56.51%，性能仍约 -0.5%，说明软件 cache
+的命中率不能单独预测净收益。
+
+stress baseline 的 real-time bogo/s 呈双峰，CV 为 38.2%，低簇只消耗约一半 CPU
+时间，因此表中的 real-time ratio 不作为主要证据。按 CPU-time 中位速率计算，
+base、LP、PTW、both 分别为 327.88、336.57、347.80、357.18 bogo/s；所有样本均
+保留，后续应改用更确定的 shootdown 工作量。
 
 ## 复现与后续
 
@@ -102,6 +130,12 @@ python3 tlb-study/validate-results.py \
 fixed4k-novictim-pcore7-fixed2100-perfcore-base-r01 \
   --qemu-version 8.2.9 --require-provenance
 ```
+
+本机没有用户所写的 `hpca2027-paper64.pdf`；目录中实际与 TLB 相关的是 14 页的
+HPCA 2027 #54 *Bifrost*。其表 III 使用 GraphBIG 的 PR/GC/SSSP/TC/BFS/CC/BC
+（8 GB）、XSBench（9 GB）、GUPS（10 GB）、DLRM（10.3 GB）和 GenomicsBench
+k-mer（33 GB），筛选 L2 TLB MPKI>5 的 workload 并运行 500M 指令。这些配置比
+当前 scale-20 PR 和 train `mcf` 更适合作为下一轮代表性压力负载。
 
 若要严格回答是否复现 TACO 的 38.1%，下一步至少需要：给 JIT 内联 lookup 标记
 精确地址范围，或构建语义等价的 outlined lookup 归因版本；使用与论文更接近的

@@ -6,11 +6,11 @@
 >
 > 作者与单位：待补
 >
-> 状态说明：本文使用当前仓库中已经完成并通过现有校验的数据。应用负载的
-> 优化对比目前仅有 3 次重复，宿主机也未达到发表级隔离条件，因此文中将其
-> 解释为阶段性趋势而非统计显著结论。用户提到的匿名稿件
-> `hpca2027-paper64.pdf` 当前未能在本机给定路径找到，本文没有推测或转述该稿件
-> 的具体 workload；第 7 节仅给出待原文核验的扩展计划。
+> 状态说明：本文使用当前仓库中已经完成并通过现有校验的数据。应用负载的优化
+> 对比为 3 次重复（stress-ng 因双峰补到 5 次），宿主机尚未离线 SMT sibling，
+> 因此文中将其解释为阶段性趋势而非统计显著结论。用户所写的
+> `hpca2027-paper64.pdf` 不在本机目录；实际存在且与 TLB 相关的是 14 页的 HPCA
+> 2027 #54 *Bifrost* 匿名稿，第 7 节已按其表 III 核验扩展 workload。
 
 ## 摘要
 
@@ -26,18 +26,19 @@
 stress-ng、DaCapo、嵌套 QEMU、SPEC CPU2006 `429.mcf` 和 GAPBS PageRank 上刻画
 访存通路。结果表明，六类应用负载中的 data refill 仅占客户机访存次数的
 0.0246%--0.4948%，但可命名 SoftMMU 慢路径仍占宿主采样周期的 1.17%--16.84%。
-这说明 refill 已成为“低频但高代价”事件，而不是完全消失的开销。
+固定主表为 4096 项并关闭 victim 后，六个系统负载的可命名慢路径平均为 13.39%，
+最高 `429.mcf` 为 24.18%，仍未接近早期论文的完整访存模拟平均 38.1%。由于当前
+分类不含 JIT 内联 fast-hit lookup，这个差异不能解释为现代 QEMU 已消除全部开销。
 
 基于该观察，本文实现两种不改动生成代码公共命中路径的保守优化：其一是在主表和
 victim TLB 均未命中后查询 128 项大页转换缓存，并仍通过原有填充逻辑安装普通
 4 KiB SoftTLB 项；其二是在 x86 页表遍历中缓存 L2--L4 非叶转换，使后续遍历可跳过
-若干层级。两者在定向随机访存微基准中分别达到 1.254 倍和 1.195 倍加速，证明机制
-能够复用大页转换并减少页表访问。然而，在六类应用负载上，性能比仅落在
-0.964--1.046 倍之间，尚未形成稳定的端到端收益。本文进一步分析该差异来自现代
-SoftTLB 对 miss 的强过滤、优化覆盖面有限、短测量窗口和宿主噪声，以及启动、I/O
-和非访存开销对热点收益的稀释。阶段性结果表明，面向现代全系统模拟器的优化不应
-只追求单次 refill 更快，而应同时解决 workload 选择、自适应启停和公共 fast path
-成本三个问题。
+若干层级。在固定 4096 项主表、关闭 victim、P-Core 锁定 2.1 GHz 且去除 timing
+路径原子计数后，大页 cache 在 THP 随机微基准达到 1.399 倍，PTW cache 在 4 KiB
+随机微基准达到 1.066 倍。sysbench 和 GAPBS 基本无变化；`429.mcf` 的 LP/both
+出现约 6%--7% 正信号，nested 热点窗口达到约 2.2 倍但端到端仅约 1.05 倍。
+阶段性结果表明，面向现代全系统模拟器的优化不应只追求单次 refill 更快，而应同时
+解决软件查询成本、workload 选择、自适应启停和公共 fast path 成本四个问题。
 
 **关键词：** 全系统模拟；动态二进制翻译；QEMU；SoftMMU；软件 TLB；页表遍历；
 大页；性能分析
@@ -367,8 +368,9 @@ invalidation 上推进统一 generation。与硬件 MMU cache 不同，这里每
 
 ### 6.1 实验设置
 
-除特别说明外，实验配置见表 3。当前宿主采用 `powersave` governor，且没有隔离整机
-后台活动；这一条件适合原型筛选，不足以支撑小幅性能差异的发表级统计推断。
+除特别说明外，实验配置见表 3。固定-TLB 消融与最终优化矩阵采用 P-Core、固定频率
+请求、提高优先级和休眠抑制；SMT sibling 仍在线，3 次样本仍不足以支撑小幅差异的
+发表级统计推断。
 
 **表 3  主要实验环境。**
 
@@ -376,77 +378,69 @@ invalidation 上推进统一 generation。与硬件 MMU cache 不同，这里每
 |---|---|
 | 模拟器 | QEMU 8.2.9 (`v8.2.9-dirty`)，x86_64-softmmu |
 | 加速器 | `-accel tcg,thread=single`，1 vCPU |
-| 宿主机 | Intel Core i7-1260P，任务固定到 logical CPU 2 |
-| 宿主系统 | x86-64 Linux 7.0.0-31-generic；governor=`powersave` |
+| 宿主机 | Intel Core i7-1260P，P-Core logical CPU 7，nice=-20 |
+| 宿主系统 | x86-64 Linux 7.0.0-31-generic；CPU 6/7 `performance`，min=max=2.1 GHz |
 | 客户机 | Debian 12，Linux 6.1.0-53-cloud-amd64 |
 | 客户机内存 | cloud workload 1 GiB；微基准 512 MiB |
 | 磁盘状态 | cloud workload 使用 qcow2 snapshot，丢弃运行期写入 |
 | 大页状态 | 优化对比中 guest THP=`always`，并由 `smaps` 验证实际覆盖 |
-| 重复次数 | 定向微基准 5 次；当前应用优化对比 3 次 |
+| 重复次数 | 定向微基准 5 次；应用优化对比 3 次，stress-ng 5 次 |
 
-timing build 不含 `QEMU_TLB_PROFILE`，但两个实验缓存的原子 lookup/hit 计数仍保留，
-因此 `on` 时间包含机制统计开销，可视为对生产实现偏保守的估计。另一方面，原子
-计数也可能改变 cache line 行为；正式版本应在功能稳定后编译去除或采样化统计，并
-重跑全部 timing 对比。
+timing build 不含 `QEMU_TLB_PROFILE`，两个实验缓存的 lookup/hit 原子计数也仅在
+profile build 编译。timing、profile 与 perf 分开运行；满载 `turbostat` 复核 CPU 7
+的 Bzy_MHz 为 2091 MHz，接近请求的 2.1 GHz。硬件热保护仍可能临时降频。
 
 ### 6.2 定向微基准
 
-表 4 使用 128 MiB working set、128 passes、每组 5 次重复。性能取
-`off median / on median`；括号内给出均值及基于 5 次样本的正态近似 95% 描述区间，
-不把它解释为跨机器总体置信区间。
+表 4 使用 128 MiB working set、128 passes、每组 5 次重复。性能取相同页模式的
+`base median / candidate median`；括号内给出样本 CV。
 
 **表 4  定向随机访存微基准。**
 
-| 场景 | off (ns/access) | on (ns/access) | 加速 |
-|---|---:|---:|---:|
-| guest 2 MiB THP，大页 cache | 268.814（273.496 ± 8.855） | 214.335（215.167 ± 2.275） | 1.254× |
-| guest 4 KiB page，PTW cache | 320.890（321.955 ± 4.974） | 268.622（276.611 ± 15.119） | 1.195× |
+| guest page | base | LP | PTW | LP+PTW |
+|---|---:|---:|---:|---:|
+| 2 MiB THP | 306.698（0.48%） | 219.177（0.48%，1.399×） | 311.741（1.22%，0.984×） | 218.849（0.19%，1.401×） |
+| 4 KiB | 314.947（0.28%） | 317.663（0.63%，0.991×） | 295.490（0.70%，1.066×） | 295.954（0.67%，1.064×） |
 
-两种方案都在预期压力场景中取得两位数收益。PTW profile smoke 还显示，启用缓存后
-大量 walk 能从 L2 直接跳到叶节点，典型层访问数由约 5 次降到约 2 次。因此，表 4
-反映的是实际页表工作量减少，而非单纯由计数方式造成的表象。
+大页 cache 在预期压力场景中取得约 40% 收益；PTW cache 的净收益为 6.6%。独立
+profile 显示，THP 下 LP 将约 419.5 万次 refill 降到约 6.6 万，4 KiB 下 PTW L2
+约命中 419.5 万次。LP+PTW 没有超过适配页模式的单一机制，说明额外查询不叠加收益。
 
 ### 6.3 应用与系统负载
 
-表 5 报告当前应用级 3 次重复的中位数。普通 workload 的 performance ratio 定义为
-`base wall median / variant wall median`；固定时长 stress-ng 使用 bogo ops/s
-中位数之比。因此大于 1 表示更快。括号中为该机制命中数除以查询数，而不是主表
-命中率。
+表 5 报告应用级中位数。主指标按 workload 定义：sysbench 用 MiB/s，DaCapo 用
+guest 毫秒，nested 用内层 ns/access，`mcf`/GAPBS 用测量窗墙钟，stress-ng 用
+real-time bogo ops/s；大于 1 表示更快。括号中依次为 timing 样本 CV 和独立 profile
+的机制命中率，而不是主表命中率。
 
 **表 5  应用级端到端性能与机制命中率。**
 
-| workload | n | LP ratio（命中率） | PTW ratio（命中率） |
-|---|---:|---:|---:|
-| sysbench random memory | 3 | 1.028×（30.02%） | 1.035×（70.66%） |
-| stress-ng `tlb-shootdown` | 3 | 1.009×（13.84%） | 1.046×（80.48%） |
-| SPEC CPU2006 `429.mcf` train | 3 | 0.964×（53.80%） | 1.020×（59.83%） |
-| GAPBS PageRank scale-20 | 3 | 1.029×（88.32%） | 1.031×（51.80%） |
-| DaCapo `avrora` | 3 | 0.994×（36.51%） | 0.985×（71.64%） |
-| nested QEMU/KVM | 3 | 1.000×（47.27%） | 1.006×（52.07%） |
+| workload | n | LP ratio（CV；命中） | PTW ratio（CV；命中） | LP+PTW ratio（CV；LP/PTW 命中） |
+|---|---:|---:|---:|---:|
+| sysbench | 3 | 1.000×（0.07%；2.35%） | 0.995×（0.66%；67.78%） | 0.998×（0.68%；32.58%/73.94%） |
+| stress-ng | 5 | 1.026×（1.63%；17.96%） | 1.060×（3.46%；79.91%） | 1.089×（2.64%；19.22%/90.73%） |
+| SPEC `429.mcf` | 3 | 1.060×（7.76%；68.55%） | 0.995×（2.03%；56.51%） | 1.069×（7.10%；67.96%/99.81%） |
+| GAPBS PR | 3 | 0.997×（3.74%；81.35%） | 1.010×（5.62%；59.04%） | 1.006×（0.79%；78.65%/95.42%） |
+| DaCapo | 3 | 1.022×（5.79%；33.00%） | 0.995×（1.03%；65.97%） | 1.068×（4.66%；26.09%/98.93%） |
+| nested hotspot | 3 | 2.229×（7.97%；49.87%） | 1.106×（6.72%；52.49%） | 2.198×（3.64%；47.62%/58.15%） |
 
-当前结果不支持“两个原型已经带来通用端到端加速”的结论。全部中位数变化位于
--3.6% 到 +4.6% 之间，方向也不一致。DaCapo 的两种方案均没有收益；`429.mcf`
-的大页 cache 反而慢 3.6%，PTW cache 则有约 2.0% 的弱正信号。短至约 5 s 的
-sysbench 和 GAPBS 虽显示 2.8%--3.5% 的正向中位数，但当前环境噪声足以覆盖这一
-量级。
+当前结果不支持“两个原型已经带来通用端到端加速”的结论。sysbench 和 GAPBS 基本
+不变；DaCapo both 与 `mcf` LP/both 有约 6%--7% 正信号，但其 CV 也达到约
+4.7%--7.8%。DaCapo 与 `mcf` 的 PTW 命中率虽为 65.97% 和 56.51%，性能仍约
+-0.5%，直接说明软件 cache 命中率不能单独预测净收益。
 
-stress-ng 的 PTW cache 中位吞吐提升 4.6%，但三次候选吞吐为 452.61、440.34 和
-133.68 bogo ops/s；第三次同时具有异常低的 QEMU CPU 时间，属于明显宿主干扰。
-在缺少更多重复与稳健离群规则前，不能把中位数当作稳定收益。一次 DaCapo PTW 运行
-还经历了宿主休眠，已经用 clean run 替换，污染目录不进入表格。
-
-`sysbench`、`mcf` 和 GAPBS 来自同一较早 prototype binary；它们各自的 A/B 运行
-内部可比，但早于 generation 与嵌套线性范围修复。stress-ng、DaCapo 和 nested
-来自最终 binary。不同 lineage 的绝对结果不能合并计算总体平均，正式评估必须在
-同一最终二进制、相同 provenance 和随机化顺序下重跑。
+stress baseline 的 real-time bogo/s 呈双峰，CV 为 38.2%，低簇只使用约一半 CPU
+时间。按 CPU-time 中位速率，base、LP、PTW、both 分别为 327.88、336.57、347.80、
+357.18 bogo/s；所有样本均保留，但本负载只作为提示，不作为稳定加速证据。六类
+workload 的四种配置均来自同一无计数 QEMU binary，profile 只用于独立机制解释。
 
 ### 6.4 热点收益为何没有转化为端到端收益
 
 嵌套负载给出了最直观的 Amdahl 定律例子。内层 random-page 热点中，大页 cache 将
-中位延迟从 522.265 ns/access 降到 243.520 ns/access，达到 2.145 倍；但包含启动、
-SSH、I/O、内层 QEMU 初始化和其他执行的外层 workload 墙钟几乎不变：baseline 为
-12.755 s，LP 为 12.758 s。也就是说，机制命中且局部窗口显著变快，并不意味着它
-在端到端时间中占有足够权重。
+中位延迟从 568.796 ns/access 降到 LP 的 255.158 ns/access 和 both 的
+258.788 ns/access，达到 2.229 倍和 2.198 倍；但外层测量窗只从 17.206 s 降到
+16.311 s 和 16.493 s，即 1.055 倍和 1.043 倍。机制命中且局部窗口显著变快，
+并不意味着它在端到端时间中占有足够权重。
 
 设原始执行时间中可优化部分占比为 $f$，该部分加速为 $s$，则理论端到端加速上限为
 
@@ -456,8 +450,8 @@ $$
 
 当 refill 只占客户机访存的千分之几，且 workload 还包含大量非访存、fast-hit、
 设备和启动成本时，即使 $s$ 很高，$f$ 也可能过小。更高的 LP/PTW 命中率也不必然
-带来收益：命中率的分母是已经通过主表和 victim 过滤的少数事件，缓存查询、哈希、
-原子计数和普通 4 KiB 项安装仍然存在。
+带来收益：命中率的分母是已经通过主表和 victim 过滤的少数事件，缓存查询、哈希和
+普通 4 KiB 项安装仍然存在。
 
 ### 6.5 固定主表并关闭 victim 后的时间归因
 
@@ -484,10 +478,10 @@ JIT，无法与客户机有效计算分离。故 13.39% 是当前可归因慢路
 
 - **RQ1：** 现代 SoftTLB 的 refill 确实稀少，但剩余事件代价高；“事件低频”不能
   推导出“慢路径时间可忽略”。
-- **RQ2：** 两个原型都能减少目标工作量，并在定向微基准中获得 19.5%--25.4% 的
-  加速；保守地保持 fast path 不变在机制验证阶段是可行的。
-- **RQ3：** 当前证据不支持稳定的应用级加速。收益受 workload、热身、失效频率和
-  端到端覆盖率显著影响。
+- **RQ2：** 两个原型都能减少目标工作量；大页 cache 和 PTW cache 在适配的定向
+  微基准中分别获得 39.9% 和 6.6% 加速，保持 fast path 不变适合机制验证。
+- **RQ3：** 当前证据不支持通用应用级加速，但 `mcf` LP/both 与 DaCapo both 出现
+  约 6%--7% 的待确认信号。收益受 workload、热身、失效频率和端到端覆盖率影响。
 - **RQ4：** 真实负载结果弱并非单一原因。现有数据同时显示机制有效、覆盖率不足和
   测量噪声较大；下一阶段应扩大代表性 workload 并提高统计强度，而不是仅继续调大
   缓存容量。
@@ -511,16 +505,26 @@ JIT，无法与客户机有效计算分离。故 13.39% 是当前可归因慢路
 
 ### 7.2 候选 workload 矩阵
 
-下表是基于当前机制缺口提出的候选集，**不是对 HPCA 2027 #64 匿名稿件 workload 的
-转述**。拿到原 PDF 后应逐项核验其 benchmark、输入规模、预热、页大小和指标，再
-决定复现优先级。
+本机 `hpca2027` 目录没有 #64，实际与 TLB 相关的是 14 页的 HPCA 2027 #54
+*Bifrost: Improving Translation Reach across Cache Hierarchy with In-Place Table
+Entry Coalescing*。其表 III 使用以下 workload，并筛选 L2 TLB MPKI>5 的任务，
+每项模拟 500M 指令：
+
+- GraphBIG：PR、GC、SSSP、TC、BFS、CC、BC，数据集 8 GB；
+- XSBench particle simulation，9 GB；
+- GUPS random access，10 GB；
+- DLRM sparse-length sum，10.3 GB；
+- GenomicsBench k-mer counting，33 GB。
+
+这些是硬件地址转换论文的高 TLB-miss 候选，不保证在 QEMU SoftTLB 下同样高 miss；
+下一轮应先用缩小输入完成正确性，再扩到论文规模并筛选 SoftTLB refill/PTW 强度。
 
 | 类别 | 候选 | 预期覆盖 | 当前状态 |
 |---|---|---|---|
 | SPEC 内存密集型 | CPU2006 `429.mcf`、`471.omnetpp`、`483.xalancbmk`；视许可证扩展 CPU2017 对应负载 | 大工作集、指针追踪、冲突 miss | `429.mcf` train 已测，其余待测 |
-| 图分析 | GAPBS BFS/SSSP/PR/CC/BC/TC；GraphBIG | 随机访问、图规模与热身敏感性 | PR scale-20 已测 |
+| 图分析 | GraphBIG PR/GC/SSSP/TC/BFS/CC/BC（#54 为 8 GB） | 随机访问、图规模与热身敏感性 | GAPBS PR scale-20 已测 |
 | KV/存储 | Redis、Memcached、RocksDB/YCSB | 长稳态、大页、系统调用与 I/O 混合 | 待准备 |
-| 数据分析/HPC | XSBench、Graph500 或论文原文采用的同类套件 | 大地址空间、不规则访存 | 待原文筛选 |
+| 数据分析/HPC | XSBench 9 GB、GUPS 10 GB、DLRM 10.3 GB、GenomicsBench 33 GB | 大地址空间、不规则访存和稀疏访问 | 已从 #54 核验，待准备 |
 | 托管运行时 | 更长 DaCapo workload 与多次迭代 | code/data 混合、GC 与稳定态 | `avrora` 短样本已测 |
 | 虚拟化 | 更长 nested QEMU，4 KiB/THP、不同 NPT 组合 | 二阶段翻译与端到端稀释 | random-page 已测 |
 | OS 压力 | kernel build、fork/exec、mmap/mprotect、shootdown | 失效、上下文切换和长时间系统行为 | baseline kernel build 已测 |
@@ -535,7 +539,7 @@ JIT，无法与客户机有效计算分离。故 13.39% 是当前可归因慢路
 - baseline、LP、PTW、probe 使用随机化 ABBA/Latin-square 顺序，每组至少 10 次；
 - 报告中位数、均值、标准差、bootstrap 95% 置信区间和效应量，并预先定义离群规则；
 - 使用同一最终提交、同一 QEMU binary hash、同一 snapshot backing image 和相同输入；
-- timing、profile、plugin-window 继续分开，且在去除生产路径原子统计后重跑 timing；
+- timing、profile、plugin-window 继续分开；timing 保持不编译 cache 原子统计；
 - 除端到端时间外，同时报告 LP/PTW 查询与命中、实际跳过的 fill/level visit、flush、
   eviction、主表最终容量和 THP 覆盖率；
 - 先用小输入做结果正确性和数据集校验，再准备大数据；数据生成、解压和 cache warming
@@ -556,11 +560,11 @@ churn 和实际节省的层访问动态启停；对 PTW cache 比较只查 L3、
 
 ## 8 局限性与有效性威胁
 
-**测量环境。** 当前实验只有一台 i7-1260P 宿主。早期应用 A/B 使用 `powersave`
-governor，未隔离整机后台任务；新增固定 TLB 时间归因绑定 P-Core、提高优先级并将
-scaling min/max 请求为 2.1 GHz，但同一物理核的 SMT sibling 仍在线，且硬件仍可因
-温度或功耗保护降频。应用优化对比仅 3 次，固定 TLB 系统负载各 1 次 perf；短
-workload 不能区分小信号与系统噪声。现有结果应视为筛选线索而非显著性结论。
+**测量环境。** 当前实验只有一台 i7-1260P 宿主。最终固定-TLB A/B 绑定 P-Core、
+nice=-20、抑制休眠，并把 scaling min/max 请求为 2.1 GHz；满载 Bzy_MHz 为
+2091 MHz。但同一物理核的 SMT sibling 仍在线，硬件仍可因温度或功耗保护降频。
+应用优化对比仅 3 次（stress 为 5 次），固定 TLB 系统负载各 1 次 perf；短 workload
+不能区分小信号与系统噪声。现有结果应视为筛选线索而非显著性结论。
 
 **实现范围。** 原型目前聚焦 x86-64、单 vCPU、single-thread TCG。大页 cache 的
 容器位于通用 SoftMMU 层，但可线性范围由 x86 target 显式提供；其他 target 尚未验证。
@@ -570,18 +574,18 @@ workload 不能区分小信号与系统噪声。现有结果应视为筛选线�
 低估全部访存模拟成本；反过来，把所有 guest JIT 周期都归因于访存又会严重高估。
 本文只把可命名慢路径用于机制定位，不声称复刻早期论文的 38.1% 总访存比例。
 
-**插桩效应。** profile 和 plugin 都会扰动执行，因此与 timing 分开。实验缓存自身的
-原子统计仍存在于 timing build，使当前候选结果偏保守但也可能改变 cache 行为。去除
-该统计后的最终对比尚待完成。
+**插桩效应。** profile 和 plugin 都会扰动执行，因此与 timing 分开。最终 timing
+build 已不编译 cache lookup/hit 原子计数；命中率只取自独立 profile。profile 的
+时间不参与加速比，且单次 profile 的 ASLR/直接映射冲突状态仍可能改变命中率。
 
 **workload 代表性。** 目前只有 `429.mcf` 的一个 SPEC train 输入、GAPBS 的一个
 算法/图规模和 DaCapo 的一个 benchmark。已有结果足以证明 workload 依赖性，却不足
-以代表服务器、图分析、托管运行时或全部 SPEC。HPCA 2027 #64 的具体负载尚未从原
-PDF 核验，不能把第 7 节候选集表述成该论文的复现。
+以代表服务器、图分析、托管运行时或全部 SPEC。HPCA 2027 #54 的 workload 已从
+原 PDF 表 III 核验，但当前尚未运行其 8--33 GB 数据集，不能把第 7 节表述成复现。
 
-**原型 lineage。** sysbench、`mcf` 和 GAPBS 的 A/B 数据来自早期原型，stress-ng、
-DaCapo 与 nested 来自修复后的最终二进制。本文只进行组内比较，没有跨 lineage 合并
-总体平均；发表版必须统一重跑。
+**原型 lineage。** 最终表中的六类 A/B 数据来自同一无统计 QEMU binary，旧原型
+数据不再进入主表。profile 计数来自同一源码的独立插桩构建，不能与 timing 比绝对
+时间；发表版仍应增加重复并冻结最终提交与二进制哈希。
 
 ## 9 相关工作
 
@@ -610,15 +614,15 @@ GAPBS 分别提供托管运行时、传统 CPU 应用与图分析 workload [5--7
 本文对 QEMU 8.2.9 x86-64 system mode 的访存慢路径进行了分层测量。现代动态主
 SoftTLB 和 victim TLB 已把 data refill 压低到客户机访存的 0.0246%--0.4948%，但
 可命名慢路径仍可占 1.17%--16.84% 的宿主周期，呈现明显的低频高代价特征。基于该
-特征实现的大页转换缓存和非叶 PTW cache 不改变生成代码 fast path，并分别在定向
-微基准中达到 1.254 倍和 1.195 倍加速。
+特征实现的大页转换缓存和非叶 PTW cache 不改变生成代码 fast path。固定 4096 项、
+关闭 victim 后，可命名慢路径平均为 13.39%、最高为 24.18%；两种 cache 分别在
+适配的定向微基准中达到 1.399 倍和 1.066 倍加速。
 
-然而，当前六类应用负载只得到 0.964--1.046 倍的中位性能比，不能证明稳定的端到端
-收益。这一结果缩小了问题空间：单纯让 refill 更快不足以构成通用优化，后续工作必须
-找到具有足够慢路径覆盖率且有代表性的 workload，消除短运行和宿主噪声，并根据运行
-期事件自适应启停；如果覆盖率仍低，则应转向每次访存都执行的公共 fast path，同时
-严格约束代码大小和宿主 cache 代价。与只报告微基准峰值相比，机制收益与应用收益
-之间的缺口本身是现代全系统模拟器优化的重要结论。
+然而，sysbench 和 GAPBS 仍基本无变化；`429.mcf` LP/both 与 DaCapo both 只有约
+6%--7% 的未确认正信号，nested 约 2.2 倍热点收益也仅转化为约 1.05 倍外层收益。
+这一结果缩小了问题空间：单纯让 refill 更快不足以构成通用优化，后续必须采用 #54
+一类高 TLB-miss 大数据负载、延长稳定窗口并增加重复；若覆盖率仍低，则应转向每次
+访存都执行的公共 fast path，同时严格约束代码大小和宿主 cache 代价。
 
 ## 参考文献
 
@@ -665,9 +669,8 @@ Architecture News*, 34(4), 2006.
 ./tlb-study/summarize-workloads.py \
   --manifest tlb-study/canonical-results.json
 python3 ./tlb-study/summarize-optimizations.py \
-  tlb-study/results/opt-mcf-{base,lp,ptw}-r0[1-3] \
-  tlb-study/results/opt-gapbs-{base,lp,ptw}-r0[1-3] \
-  tlb-study/results/opt-nested-linear-{base,lp,ptw}-r0[1-3]
+  tlb-study/results/opt-*-fixed4k-novictim-pcore7-fixed2100-\
+nostats-v1-{base,lp,ptw,both}-r0[1-3]
 ./tlb-study/validate-results.py RESULTS... \
   --qemu-version 8.2.9 --require-provenance
 ```
@@ -675,9 +678,9 @@ python3 ./tlb-study/summarize-optimizations.py \
 ## 附录 B：投稿前待补清单
 
 - [ ] 补作者、单位、基金、匿名化与投稿格式；
-- [ ] 找回并核验 `hpca2027-paper64.pdf` 的标题、作者、页数、workload、输入和指标；
-- [ ] 把该匿名稿件实际采用的 TLB workload 与第 7 节候选矩阵逐项对齐；
-- [ ] 统一最终 binary，去除 timing 路径中的原子统计后重跑全部 A/B；
+- [x] 核验本机实际的 HPCA 2027 #54 PDF、页数、workload、输入和筛选指标；
+- [x] 将 #54 workload 与第 7 节候选矩阵对齐；
+- [x] 在统一无 cache 原子统计 binary 上重跑 baseline/LP/PTW/LP+PTW；
 - [ ] 在隔离核、performance governor 和禁用休眠条件下至少重复 10 次；
 - [ ] 增加 `471.omnetpp`、`483.xalancbmk`、更多 GAPBS 算法及大规模输入；
 - [ ] 增加至少一类长稳态 server/KV workload 和一类多 vCPU workload；
