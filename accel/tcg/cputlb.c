@@ -277,7 +277,9 @@ static void tlb_lp_flush_locked(CPUState *cpu, int mmu_idx)
         return;
     }
     if (tlb_lp_flush_desc_locked(&cpu->neg.tlb.d[mmu_idx])) {
+#ifdef QEMU_TLB_PROFILE
         qatomic_inc(&cpu->neg.tlb.c.lp_tlb_flush_count);
+#endif
     }
 }
 
@@ -288,7 +290,9 @@ static void tlb_ptw_cache_flush_locked(CPUState *cpu)
     if (++common->ptw_cache_generation == 0) {
         common->ptw_cache_generation = 1;
     }
+#ifdef QEMU_TLB_PROFILE
     qatomic_inc(&common->ptw_cache_flush_count);
+#endif
 }
 
 static void tlb_flush_one_mmuidx_locked(CPUState *cpu, int mmu_idx,
@@ -1274,7 +1278,9 @@ static void tlb_lp_insert(CPUState *cpu, int mmu_idx, vaddr addr,
     if (!entry) {
         way = desc->lp_tlb_next[set]++ % CPU_LP_TLB_WAYS;
         entry = &desc->lp_tlb[set * CPU_LP_TLB_WAYS + way];
+#ifdef QEMU_TLB_PROFILE
         qatomic_inc(&common->lp_tlb_evict_count);
+#endif
     }
 
     entry->full = *full;
@@ -1283,7 +1289,9 @@ static void tlb_lp_insert(CPUState *cpu, int mmu_idx, vaddr addr,
     entry->paddr_base = paddr_base;
     entry->generation = desc->lp_tlb_generation;
     desc->lp_tlb_page_bits |= MAKE_64BIT_MASK(page_bits, 1);
+#ifdef QEMU_TLB_PROFILE
     qatomic_inc(&common->lp_tlb_insert_count);
+#endif
 }
 
 /*
@@ -1498,7 +1506,9 @@ static bool tlb_lp_hit(CPUState *cpu, int mmu_idx, vaddr addr,
     if (common->lp_tlb_mode == CPU_TLB_CACHE_OFF) {
         return false;
     }
+#ifdef QEMU_TLB_PROFILE
     qatomic_inc(&common->lp_tlb_lookup_count);
+#endif
 
     while (page_bits_mask) {
         unsigned page_bits = ctz64(page_bits_mask);
@@ -1520,7 +1530,9 @@ static bool tlb_lp_hit(CPUState *cpu, int mmu_idx, vaddr addr,
                 continue;
             }
 
+#ifdef QEMU_TLB_PROFILE
             qatomic_inc(&common->lp_tlb_match_count);
+#endif
             if (common->lp_tlb_mode == CPU_TLB_CACHE_PROBE) {
                 return false;
             }
@@ -1530,8 +1542,8 @@ static bool tlb_lp_hit(CPUState *cpu, int mmu_idx, vaddr addr,
             common->lp_tlb_replay = true;
             tlb_set_page_full(cpu, mmu_idx, addr, &full);
             common->lp_tlb_replay = false;
-            qatomic_inc(&common->lp_tlb_hit_count);
 #ifdef QEMU_TLB_PROFILE
+            qatomic_inc(&common->lp_tlb_hit_count);
             qatomic_inc(&common->origin_lp_tlb_hit_count[origin][access_type]);
 #endif
             return true;

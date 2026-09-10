@@ -204,20 +204,26 @@ static unsigned ptw_cache_lookup(CPUX86State *env, const TranslateParams *in,
         unsigned set = ptw_cache_hash(in, level);
         unsigned way;
 
+#ifdef QEMU_TLB_PROFILE
         qatomic_inc(&common->ptw_cache_lookup_count[level]);
+#endif
         for (way = 0; way < X86_PTW_CACHE_WAYS; way++) {
             X86PTWCacheEntry *entry = &env->ptw_cache[set][way];
 
             if (!ptw_cache_entry_matches(entry, in, generation, level)) {
                 continue;
             }
+#ifdef QEMU_TLB_PROFILE
             qatomic_inc(&common->ptw_cache_match_count[level]);
+#endif
             if (common->ptw_cache_mode == CPU_TLB_CACHE_PROBE) {
                 return 0;
             }
             *next_table = entry->next_table;
             *ptep = entry->ptep;
+#ifdef QEMU_TLB_PROFILE
             qatomic_inc(&common->ptw_cache_hit_count[level]);
+#endif
             return level;
         }
     }
@@ -250,7 +256,9 @@ static void ptw_cache_insert(CPUX86State *env, const TranslateParams *in,
     if (!entry) {
         way = env->ptw_cache_next[set]++ % X86_PTW_CACHE_WAYS;
         entry = &env->ptw_cache[set][way];
+#ifdef QEMU_TLB_PROFILE
         qatomic_inc(&common->ptw_cache_evict_count[level]);
+#endif
     }
     *entry = (X86PTWCacheEntry) {
         .generation = generation,
@@ -263,7 +271,9 @@ static void ptw_cache_insert(CPUX86State *env, const TranslateParams *in,
         .ptw_idx = in->ptw_idx,
         .level = level,
     };
+#ifdef QEMU_TLB_PROFILE
     qatomic_inc(&common->ptw_cache_insert_count[level]);
+#endif
 }
 
 static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
