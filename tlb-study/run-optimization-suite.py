@@ -85,6 +85,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--workload", action="append", choices=choices)
     parser.add_argument("--variant", action="append", choices=VARIANTS)
+    parser.add_argument(
+        "--qemu", type=Path,
+        default=here.parent / "build-tlb-base/qemu-system-x86_64",
+    )
     parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument("--cpu", default="2")
     parser.add_argument("--nice", type=int, default=0)
@@ -112,7 +116,7 @@ def main():
             r"[A-Za-z0-9][A-Za-z0-9._-]*", args.name_tag):
         parser.error("--name-tag contains unsupported characters")
 
-    qemu = (here.parent / "build-tlb-base/qemu-system-x86_64").resolve()
+    qemu = args.qemu.resolve()
     if not qemu.is_file():
         parser.error(f"QEMU binary does not exist: {qemu}")
     requested_workloads = args.workload or list(choices)

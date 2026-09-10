@@ -73,6 +73,22 @@ class PerfClassificationTest(unittest.TestCase):
             self.assertEqual(summary["stress_bogo_ops_per_second"], 418.33)
             self.assertEqual(summary["stress_bogo_ops_per_cpu_second"], 422.40)
 
+    def test_application_metrics_are_read_from_workload_log(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "console.log").write_text("")
+            (root / "workload.log").write_text(
+                "1024.00 MiB transferred (158.87 MiB/sec)\n"
+                "===== DaCapo 9.12 avrora PASSED in 77085 msec =====\n"
+            )
+            (root / "result.json").write_text(json.dumps({
+                "name": "application", "remote_done": "TLB-CLOUD-DONE rc=0",
+                "remote_returncode": 0, "wall_seconds": 80.0,
+            }))
+            summary = ANALYZER.summarize(root)
+            self.assertEqual(summary["sysbench_mib_per_second"], 158.87)
+            self.assertEqual(summary["dacapo_msec"], 77085)
+
     def test_ptw_summary_separates_primary_and_nested_walks(self):
         summary = ANALYZER.summarize_ptw({
             "primary": {

@@ -68,6 +68,17 @@ def parse_console(path):
             "stress_bogo_ops_per_second": float(real_rate),
             "stress_bogo_ops_per_cpu_second": float(cpu_rate),
         })
+    sysbench_matches = re.findall(
+        r"MiB transferred \(([0-9.]+) MiB/sec\)", text
+    )
+    if sysbench_matches:
+        result["sysbench_mib_per_second"] = float(sysbench_matches[-1])
+    dacapo_matches = re.findall(
+        r"^===== DaCapo .*? PASSED in (\d+) msec =====$",
+        text, re.MULTILINE,
+    )
+    if dacapo_matches:
+        result["dacapo_msec"] = int(dacapo_matches[-1])
     return result
 
 
