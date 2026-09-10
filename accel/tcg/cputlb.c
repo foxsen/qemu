@@ -85,6 +85,12 @@ QEMU_BUILD_BUG_ON(sizeof(vaddr) > sizeof(run_on_cpu_data));
 QEMU_BUILD_BUG_ON(NB_MMU_MODES > 16);
 #define ALL_MMUIDX_BITS ((1 << NB_MMU_MODES) - 1)
 
+enum TLBProfileOrigin {
+    TLB_PROFILE_HELPER,
+    TLB_PROFILE_PROBE,
+    TLB_PROFILE_ATOMIC,
+};
+
 static inline size_t tlb_n_entries(CPUTLBDescFast *fast)
 {
     return (fast->mask >> CPU_TLB_ENTRY_BITS) + 1;
@@ -242,12 +248,48 @@ static void tlb_mmu_flush_locked(CPUTLBDesc *desc, CPUTLBDescFast *fast)
     memset(desc->vtable, -1, sizeof(desc->vtable));
 }
 
+/* Called with tlb_c.lock held, except during single-threaded initialization. */
+static bool tlb_lp_flush_desc_locked(CPUTLBDesc *desc)
+{
+    bool populated = desc->lp_tlb_page_bits != 0;
+
+    desc->lp_tlb_page_bits = 0;
+    if (++desc->lp_tlb_generation == 0) {
+        desc->lp_tlb_generation = 1;
+        memset(desc->lp_tlb, 0, sizeof(*desc->lp_tlb) *
+               CPU_LP_TLB_SETS * CPU_LP_TLB_WAYS);
+        memset(desc->lp_tlb_next, 0, sizeof(desc->lp_tlb_next));
+    }
+    return populated;
+}
+
+static void tlb_lp_flush_locked(CPUState *cpu, int mmu_idx)
+{
+    if (cpu->neg.tlb.c.lp_tlb_mode == CPU_TLB_CACHE_OFF) {
+        return;
+    }
+    if (tlb_lp_flush_desc_locked(&cpu->neg.tlb.d[mmu_idx])) {
+        qatomic_inc(&cpu->neg.tlb.c.lp_tlb_flush_count);
+    }
+}
+
+static void tlb_ptw_cache_flush_locked(CPUState *cpu)
+{
+    CPUTLBCommon *common = &cpu->neg.tlb.c;
+
+    if (++common->ptw_cache_generation == 0) {
+        common->ptw_cache_generation = 1;
+    }
+    qatomic_inc(&common->ptw_cache_flush_count);
+}
+
 static void tlb_flush_one_mmuidx_locked(CPUState *cpu, int mmu_idx,
                                         int64_t now)
 {
     CPUTLBDesc *desc = &cpu->neg.tlb.d[mmu_idx];
     CPUTLBDescFast *fast = &cpu->neg.tlb.f[mmu_idx];
 
+    tlb_lp_flush_locked(cpu, mmu_idx);
     tlb_mmu_resize_locked(desc, fast, now);
     tlb_mmu_flush_locked(desc, fast);
 }
@@ -261,6 +303,11 @@ static void tlb_mmu_init(CPUTLBDesc *desc, CPUTLBDescFast *fast, int64_t now)
     fast->mask = (n_entries - 1) << CPU_TLB_ENTRY_BITS;
     fast->table = g_new(CPUTLBEntry, n_entries);
     desc->fulltlb = g_new(CPUTLBEntryFull, n_entries);
+    desc->lp_tlb = g_new0(CPUTLBLargePageEntry,
+                          CPU_LP_TLB_SETS * CPU_LP_TLB_WAYS);
+    desc->lp_tlb_generation = 0;
+    memset(desc->lp_tlb_next, 0, sizeof(desc->lp_tlb_next));
+    tlb_lp_flush_desc_locked(desc);
     tlb_mmu_flush_locked(desc, fast);
 }
 
@@ -276,6 +323,8 @@ static inline void tlb_n_used_entries_dec(CPUState *cpu, uintptr_t mmu_idx)
 
 void tlb_init(CPUState *cpu)
 {
+    const char *lp_tlb_mode = g_getenv("QEMU_SOFTMMU_LP_CACHE");
+    const char *ptw_cache_mode = g_getenv("QEMU_X86_PTW_CACHE");
     int64_t now = get_clock_realtime();
     int i;
 
@@ -283,6 +332,29 @@ void tlb_init(CPUState *cpu)
 
     /* All tlbs are initialized flushed. */
     cpu->neg.tlb.c.dirty = 0;
+    cpu->neg.tlb.c.ptw_cache_generation = 1;
+    if (!lp_tlb_mode || !strcmp(lp_tlb_mode, "off")) {
+        cpu->neg.tlb.c.lp_tlb_mode = CPU_TLB_CACHE_OFF;
+    } else if (!strcmp(lp_tlb_mode, "on")) {
+        cpu->neg.tlb.c.lp_tlb_mode = CPU_TLB_CACHE_ON;
+    } else if (!strcmp(lp_tlb_mode, "probe")) {
+        cpu->neg.tlb.c.lp_tlb_mode = CPU_TLB_CACHE_PROBE;
+    } else {
+        warn_report("invalid QEMU_SOFTMMU_LP_CACHE value '%s'; using off",
+                    lp_tlb_mode);
+        cpu->neg.tlb.c.lp_tlb_mode = CPU_TLB_CACHE_OFF;
+    }
+    if (!ptw_cache_mode || !strcmp(ptw_cache_mode, "off")) {
+        cpu->neg.tlb.c.ptw_cache_mode = CPU_TLB_CACHE_OFF;
+    } else if (!strcmp(ptw_cache_mode, "on")) {
+        cpu->neg.tlb.c.ptw_cache_mode = CPU_TLB_CACHE_ON;
+    } else if (!strcmp(ptw_cache_mode, "probe")) {
+        cpu->neg.tlb.c.ptw_cache_mode = CPU_TLB_CACHE_PROBE;
+    } else {
+        warn_report("invalid QEMU_X86_PTW_CACHE value '%s'; using off",
+                    ptw_cache_mode);
+        cpu->neg.tlb.c.ptw_cache_mode = CPU_TLB_CACHE_OFF;
+    }
 
     for (i = 0; i < NB_MMU_MODES; i++) {
         tlb_mmu_init(&cpu->neg.tlb.d[i], &cpu->neg.tlb.f[i], now);
@@ -300,6 +372,7 @@ void tlb_destroy(CPUState *cpu)
 
         g_free(fast->table);
         g_free(desc->fulltlb);
+        g_free(desc->lp_tlb);
     }
 }
 
@@ -333,6 +406,8 @@ static void tlb_flush_by_mmuidx_async_work(CPUState *cpu, run_on_cpu_data data)
     tlb_debug("mmu_idx:0x%04" PRIx16 "\n", asked);
 
     qemu_spin_lock(&cpu->neg.tlb.c.lock);
+
+    tlb_ptw_cache_flush_locked(cpu);
 
     all_dirty = cpu->neg.tlb.c.dirty;
     to_clean = asked & all_dirty;
@@ -478,6 +553,9 @@ static void tlb_flush_page_locked(CPUState *cpu, int midx, vaddr page)
     vaddr lp_addr = cpu->neg.tlb.d[midx].large_page_addr;
     vaddr lp_mask = cpu->neg.tlb.d[midx].large_page_mask;
 
+    /* Conservative until range-aware large-page cache invalidation exists. */
+    tlb_lp_flush_locked(cpu, midx);
+
     /* Check if we need to flush due to large pages.  */
     if ((page & lp_mask) == lp_addr) {
         tlb_debug("forcing full flush midx %d (%016"
@@ -512,6 +590,7 @@ static void tlb_flush_page_by_mmuidx_async_0(CPUState *cpu,
     tlb_debug("page addr: %016" VADDR_PRIx " mmu_map:0x%x\n", addr, idxmap);
 
     qemu_spin_lock(&cpu->neg.tlb.c.lock);
+    tlb_ptw_cache_flush_locked(cpu);
     for (mmu_idx = 0; mmu_idx < NB_MMU_MODES; mmu_idx++) {
         if ((idxmap >> mmu_idx) & 1) {
             tlb_flush_page_locked(cpu, mmu_idx, addr);
@@ -698,6 +777,9 @@ static void tlb_flush_range_locked(CPUState *cpu, int midx,
     CPUTLBDescFast *f = &cpu->neg.tlb.f[midx];
     vaddr mask = MAKE_64BIT_MASK(0, bits);
 
+    /* Conservative until range-aware large-page cache invalidation exists. */
+    tlb_lp_flush_locked(cpu, midx);
+
     /*
      * If @bits is smaller than the tlb size, there may be multiple entries
      * within the TLB; otherwise all addresses that match under @mask hit
@@ -758,6 +840,7 @@ static void tlb_flush_range_by_mmuidx_async_0(CPUState *cpu,
               d.addr, d.bits, d.len, d.idxmap);
 
     qemu_spin_lock(&cpu->neg.tlb.c.lock);
+    tlb_ptw_cache_flush_locked(cpu);
     for (mmu_idx = 0; mmu_idx < NB_MMU_MODES; mmu_idx++) {
         if ((d.idxmap >> mmu_idx) & 1) {
             tlb_flush_range_locked(cpu, mmu_idx, d.addr, d.len, d.bits);
@@ -1102,6 +1185,67 @@ static inline void tlb_set_compare(CPUTLBEntryFull *full, CPUTLBEntry *ent,
     full->slow_flags[access_type] = flags;
 }
 
+static unsigned tlb_lp_hash(vaddr base, unsigned page_bits)
+{
+    uint64_t key = base >> page_bits;
+
+    key ^= key >> 17;
+    key ^= key >> 9;
+    key ^= page_bits;
+    return key & (CPU_LP_TLB_SETS - 1);
+}
+
+static void tlb_lp_insert(CPUState *cpu, int mmu_idx, vaddr addr,
+                          const CPUTLBEntryFull *full)
+{
+    CPUTLBCommon *common = &cpu->neg.tlb.c;
+    CPUTLBDesc *desc = &cpu->neg.tlb.d[mmu_idx];
+    CPUTLBLargePageEntry *entry = NULL;
+    unsigned page_bits = full->lg_translation_size;
+    uint64_t page_mask;
+    vaddr vaddr_base;
+    hwaddr paddr_base;
+    unsigned set, way;
+
+    if (common->lp_tlb_mode == CPU_TLB_CACHE_OFF || common->lp_tlb_replay ||
+        page_bits <= TARGET_PAGE_BITS || page_bits >= 64) {
+        return;
+    }
+
+    page_mask = MAKE_64BIT_MASK(0, page_bits);
+    vaddr_base = addr & ~page_mask;
+    paddr_base = full->phys_addr & ~page_mask;
+    set = tlb_lp_hash(vaddr_base, page_bits);
+
+    for (way = 0; way < CPU_LP_TLB_WAYS; way++) {
+        CPUTLBLargePageEntry *candidate =
+            &desc->lp_tlb[set * CPU_LP_TLB_WAYS + way];
+
+        if (candidate->generation == desc->lp_tlb_generation &&
+            candidate->vaddr_base == vaddr_base &&
+            candidate->full.lg_translation_size == page_bits) {
+            entry = candidate;
+            break;
+        }
+        if (!entry && candidate->generation != desc->lp_tlb_generation) {
+            entry = candidate;
+        }
+    }
+    if (!entry) {
+        way = desc->lp_tlb_next[set]++ % CPU_LP_TLB_WAYS;
+        entry = &desc->lp_tlb[set * CPU_LP_TLB_WAYS + way];
+        qatomic_inc(&common->lp_tlb_evict_count);
+    }
+
+    entry->full = *full;
+    entry->full.phys_addr = paddr_base;
+    entry->vaddr_base = vaddr_base;
+    entry->paddr_base = paddr_base;
+    entry->generation = desc->lp_tlb_generation;
+    desc->lp_tlb_page_bits |= MAKE_64BIT_MASK(page_bits, 1);
+    qatomic_inc(&common->lp_tlb_insert_count);
+}
+
 /*
  * Add a new TLB entry. At most one entry for a given virtual address
  * is permitted. Only a single TARGET_PAGE_SIZE region is mapped, the
@@ -1125,6 +1269,16 @@ void tlb_set_page_full(CPUState *cpu, int mmu_idx,
     bool is_ram, is_romd;
 
     assert_cpu_is_self(cpu);
+
+    /* Preserve the target translation before host-section translation. */
+    tlb_lp_insert(cpu, mmu_idx, addr, full);
+
+#ifdef QEMU_TLB_PROFILE
+    qatomic_inc(&cpu->neg.tlb.c.fill_install_count);
+    if (full->lg_page_size < ARRAY_SIZE(tlb->c.fill_page_bits)) {
+        qatomic_inc(&tlb->c.fill_page_bits[full->lg_page_size]);
+    }
+#endif
 
     if (full->lg_page_size <= TARGET_PAGE_BITS) {
         sz = TARGET_PAGE_SIZE;
@@ -1275,6 +1429,75 @@ void tlb_set_page_full(CPUState *cpu, int mmu_idx,
     qemu_spin_unlock(&tlb->c.lock);
 }
 
+static bool tlb_lp_access_ok(const CPUTLBEntryFull *full,
+                             MMUAccessType access_type)
+{
+    static const int required_prot[MMU_ACCESS_COUNT] = {
+        [MMU_DATA_LOAD] = PAGE_READ,
+        [MMU_DATA_STORE] = PAGE_WRITE,
+        [MMU_INST_FETCH] = PAGE_EXEC,
+    };
+
+    if (!(full->prot & required_prot[access_type])) {
+        return false;
+    }
+    return access_type != MMU_DATA_STORE || !(full->prot & PAGE_WRITE_INV);
+}
+
+/* Consult only after both the direct-mapped and victim TLBs miss. */
+static bool tlb_lp_hit(CPUState *cpu, int mmu_idx, vaddr addr,
+                       MMUAccessType access_type,
+                       enum TLBProfileOrigin origin)
+{
+    CPUTLBCommon *common = &cpu->neg.tlb.c;
+    CPUTLBDesc *desc = &cpu->neg.tlb.d[mmu_idx];
+    uint64_t page_bits_mask = desc->lp_tlb_page_bits;
+
+    if (common->lp_tlb_mode == CPU_TLB_CACHE_OFF) {
+        return false;
+    }
+    qatomic_inc(&common->lp_tlb_lookup_count);
+
+    while (page_bits_mask) {
+        unsigned page_bits = ctz64(page_bits_mask);
+        uint64_t page_mask = MAKE_64BIT_MASK(0, page_bits);
+        vaddr vaddr_base = addr & ~page_mask;
+        unsigned set = tlb_lp_hash(vaddr_base, page_bits);
+        unsigned way;
+
+        page_bits_mask &= page_bits_mask - 1;
+        for (way = 0; way < CPU_LP_TLB_WAYS; way++) {
+            CPUTLBLargePageEntry *entry =
+                &desc->lp_tlb[set * CPU_LP_TLB_WAYS + way];
+            CPUTLBEntryFull full;
+
+            if (entry->generation != desc->lp_tlb_generation ||
+                entry->vaddr_base != vaddr_base ||
+                entry->full.lg_translation_size != page_bits ||
+                !tlb_lp_access_ok(&entry->full, access_type)) {
+                continue;
+            }
+
+            qatomic_inc(&common->lp_tlb_match_count);
+            if (common->lp_tlb_mode == CPU_TLB_CACHE_PROBE) {
+                return false;
+            }
+
+            full = entry->full;
+            full.phys_addr = entry->paddr_base | (addr & page_mask);
+            common->lp_tlb_replay = true;
+            tlb_set_page_full(cpu, mmu_idx, addr, &full);
+            common->lp_tlb_replay = false;
+            qatomic_inc(&common->lp_tlb_hit_count);
+#ifdef QEMU_TLB_PROFILE
+            qatomic_inc(&common->origin_lp_tlb_hit_count[origin][access_type]);
+#endif
+            return true;
+        }
+    }
+    return false;
+}
+
 void tlb_set_page_with_attrs(CPUState *cpu, vaddr addr,
                              hwaddr paddr, MemTxAttrs attrs, int prot,
                              int mmu_idx, uint64_t size)
@@ -1312,10 +1535,33 @@ static void tlb_fill(CPUState *cpu, vaddr addr, int size,
      * This is not a probe, so only valid return is success; failure
      * should result in exception + longjmp to the cpu loop.
      */
+#ifdef QEMU_TLB_PROFILE
+    qatomic_inc(&cpu->neg.tlb.c.fill_call_count[access_type]);
+#endif
     ok = cpu->cc->tcg_ops->tlb_fill(cpu, addr, size,
                                     access_type, mmu_idx, false, retaddr);
     assert(ok);
 }
+
+#ifdef QEMU_TLB_PROFILE
+static void tlb_profile_l1_miss(CPUState *cpu, enum TLBProfileOrigin origin,
+                                MMUAccessType access_type)
+{
+    qatomic_inc(&cpu->neg.tlb.c.origin_l1_miss_count[origin][access_type]);
+}
+
+static void tlb_profile_victim_hit(CPUState *cpu, enum TLBProfileOrigin origin,
+                                   MMUAccessType access_type)
+{
+    qatomic_inc(&cpu->neg.tlb.c.origin_victim_hit_count[origin][access_type]);
+}
+
+static void tlb_profile_fill(CPUState *cpu, enum TLBProfileOrigin origin,
+                             MMUAccessType access_type)
+{
+    qatomic_inc(&cpu->neg.tlb.c.origin_fill_call_count[origin][access_type]);
+}
+#endif
 
 static inline void cpu_unaligned_access(CPUState *cpu, vaddr addr,
                                         MMUAccessType access_type,
@@ -1365,6 +1611,9 @@ static bool victim_tlb_hit(CPUState *cpu, size_t mmu_idx, size_t index,
     size_t vidx;
 
     assert_cpu_is_self(cpu);
+#ifdef QEMU_TLB_PROFILE
+    qatomic_inc(&cpu->neg.tlb.c.l1_miss_count[access_type]);
+#endif
     for (vidx = 0; vidx < CPU_VTLB_SIZE; ++vidx) {
         CPUTLBEntry *vtlb = &cpu->neg.tlb.d[mmu_idx].vtable[vidx];
         uint64_t cmp = tlb_read_idx(vtlb, access_type);
@@ -1383,6 +1632,9 @@ static bool victim_tlb_hit(CPUState *cpu, size_t mmu_idx, size_t index,
             CPUTLBEntryFull *f2 = &cpu->neg.tlb.d[mmu_idx].vfulltlb[vidx];
             CPUTLBEntryFull tmpf;
             tmpf = *f1; *f1 = *f2; *f2 = tmpf;
+#ifdef QEMU_TLB_PROFILE
+            qatomic_inc(&cpu->neg.tlb.c.victim_hit_count[access_type]);
+#endif
             return true;
         }
     }
@@ -1428,16 +1680,27 @@ static int probe_access_internal(CPUState *cpu, vaddr addr,
     CPUTLBEntryFull *full;
 
     if (!tlb_hit_page(tlb_addr, page_addr)) {
+#ifdef QEMU_TLB_PROFILE
+        tlb_profile_l1_miss(cpu, TLB_PROFILE_PROBE, access_type);
+#endif
         if (!victim_tlb_hit(cpu, mmu_idx, index, access_type, page_addr)) {
-            if (!cpu->cc->tcg_ops->tlb_fill(cpu, addr, fault_size, access_type,
-                                            mmu_idx, nonfault, retaddr)) {
-                /* Non-faulting page table read failed.  */
-                *phost = NULL;
-                *pfull = NULL;
-                return TLB_INVALID_MASK;
+            if (!tlb_lp_hit(cpu, mmu_idx, addr, access_type,
+                            TLB_PROFILE_PROBE)) {
+#ifdef QEMU_TLB_PROFILE
+                qatomic_inc(&cpu->neg.tlb.c.fill_call_count[access_type]);
+                tlb_profile_fill(cpu, TLB_PROFILE_PROBE, access_type);
+#endif
+                if (!cpu->cc->tcg_ops->tlb_fill(cpu, addr, fault_size,
+                                                access_type, mmu_idx,
+                                                nonfault, retaddr)) {
+                    /* Non-faulting page table read failed.  */
+                    *phost = NULL;
+                    *pfull = NULL;
+                    return TLB_INVALID_MASK;
+                }
             }
 
-            /* TLB resize via tlb_fill may have moved the entry.  */
+            /* A fill may have resized, and a cache hit installed an entry. */
             index = tlb_index(cpu, mmu_idx, addr);
             entry = tlb_entry(cpu, mmu_idx, addr);
 
@@ -1447,6 +1710,10 @@ static int probe_access_internal(CPUState *cpu, vaddr addr,
              * called tlb_fill, so we know that this entry *is* valid.
              */
             flags &= ~TLB_INVALID_MASK;
+#ifdef QEMU_TLB_PROFILE
+        } else {
+            tlb_profile_victim_hit(cpu, TLB_PROFILE_PROBE, access_type);
+#endif
         }
         tlb_addr = tlb_read_idx(entry, access_type);
     }
@@ -1708,12 +1975,25 @@ static bool mmu_lookup1(CPUState *cpu, MMULookupPageData *data,
 
     /* If the TLB entry is for a different page, reload and try again.  */
     if (!tlb_hit(tlb_addr, addr)) {
+#ifdef QEMU_TLB_PROFILE
+        tlb_profile_l1_miss(cpu, TLB_PROFILE_HELPER, access_type);
+#endif
         if (!victim_tlb_hit(cpu, mmu_idx, index, access_type,
                             addr & TARGET_PAGE_MASK)) {
-            tlb_fill(cpu, addr, data->size, access_type, mmu_idx, ra);
-            maybe_resized = true;
+            if (!tlb_lp_hit(cpu, mmu_idx, addr, access_type,
+                            TLB_PROFILE_HELPER)) {
+#ifdef QEMU_TLB_PROFILE
+                tlb_profile_fill(cpu, TLB_PROFILE_HELPER, access_type);
+#endif
+                tlb_fill(cpu, addr, data->size, access_type, mmu_idx, ra);
+                maybe_resized = true;
+            }
             index = tlb_index(cpu, mmu_idx, addr);
             entry = tlb_entry(cpu, mmu_idx, addr);
+#ifdef QEMU_TLB_PROFILE
+        } else {
+            tlb_profile_victim_hit(cpu, TLB_PROFILE_HELPER, access_type);
+#endif
         }
         tlb_addr = tlb_read_idx(entry, access_type) & ~TLB_INVALID_MASK;
     }
@@ -1885,12 +2165,25 @@ static void *atomic_mmu_lookup(CPUState *cpu, vaddr addr, MemOpIdx oi,
     /* Check TLB entry and enforce page permissions.  */
     tlb_addr = tlb_addr_write(tlbe);
     if (!tlb_hit(tlb_addr, addr)) {
+#ifdef QEMU_TLB_PROFILE
+        tlb_profile_l1_miss(cpu, TLB_PROFILE_ATOMIC, MMU_DATA_STORE);
+#endif
         if (!victim_tlb_hit(cpu, mmu_idx, index, MMU_DATA_STORE,
                             addr & TARGET_PAGE_MASK)) {
-            tlb_fill(cpu, addr, size,
-                     MMU_DATA_STORE, mmu_idx, retaddr);
+            if (!tlb_lp_hit(cpu, mmu_idx, addr, MMU_DATA_STORE,
+                            TLB_PROFILE_ATOMIC)) {
+#ifdef QEMU_TLB_PROFILE
+                tlb_profile_fill(cpu, TLB_PROFILE_ATOMIC, MMU_DATA_STORE);
+#endif
+                tlb_fill(cpu, addr, size,
+                         MMU_DATA_STORE, mmu_idx, retaddr);
+            }
             index = tlb_index(cpu, mmu_idx, addr);
             tlbe = tlb_entry(cpu, mmu_idx, addr);
+#ifdef QEMU_TLB_PROFILE
+        } else {
+            tlb_profile_victim_hit(cpu, TLB_PROFILE_ATOMIC, MMU_DATA_STORE);
+#endif
         }
         tlb_addr = tlb_addr_write(tlbe) & ~TLB_INVALID_MASK;
     }
@@ -1902,6 +2195,9 @@ static void *atomic_mmu_lookup(CPUState *cpu, vaddr addr, MemOpIdx oi,
      * but addr_read will only be -1 if PAGE_READ was unset.
      */
     if (unlikely(tlbe->addr_read == -1)) {
+#ifdef QEMU_TLB_PROFILE
+        tlb_profile_fill(cpu, TLB_PROFILE_ATOMIC, MMU_DATA_LOAD);
+#endif
         tlb_fill(cpu, addr, size, MMU_DATA_LOAD, mmu_idx, retaddr);
         /*
          * Since we don't support reads and writes to different

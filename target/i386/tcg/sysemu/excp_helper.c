@@ -30,12 +30,16 @@ typedef struct TranslateParams {
     int mmu_idx;
     int ptw_idx;
     MMUAccessType access_type;
+#ifdef QEMU_TLB_PROFILE
+    int profile_stage;
+#endif
 } TranslateParams;
 
 typedef struct TranslateResult {
     hwaddr paddr;
     int prot;
     int page_size;
+    int translation_size;
 } TranslateResult;
 
 typedef enum TranslateFaultStage2 {
@@ -55,13 +59,27 @@ typedef struct PTETranslate {
     CPUX86State *env;
     TranslateFault *err;
     int ptw_idx;
+#ifdef QEMU_TLB_PROFILE
+    MMUAccessType access_type;
+    int profile_stage;
+#endif
     void *haddr;
     hwaddr gaddr;
 } PTETranslate;
 
+#ifdef QEMU_TLB_PROFILE
+static bool ptw_translate(PTETranslate *inout, hwaddr addr, int level,
+                          uint64_t ra)
+#else
 static bool ptw_translate(PTETranslate *inout, hwaddr addr, uint64_t ra)
+#endif
 {
     int flags;
+
+#ifdef QEMU_TLB_PROFILE
+    qatomic_inc(&env_cpu(inout->env)->neg.tlb.c.ptw_level_count
+                [inout->profile_stage][inout->access_type][level]);
+#endif
 
     inout->gaddr = addr;
     flags = probe_access_full_mmu(inout->env, addr, 0, MMU_DATA_STORE,
@@ -80,6 +98,13 @@ static bool ptw_translate(PTETranslate *inout, hwaddr addr, uint64_t ra)
     }
     return true;
 }
+
+#ifdef QEMU_TLB_PROFILE
+#define PTW_TRANSLATE(inout, addr, level, ra) \
+    ptw_translate(inout, addr, level, ra)
+#else
+#define PTW_TRANSLATE(inout, addr, level, ra) ptw_translate(inout, addr, ra)
+#endif
 
 static inline uint32_t ptw_ldl(const PTETranslate *in, uint64_t ra)
 {
@@ -135,6 +160,112 @@ static inline bool ptw_setl(const PTETranslate *in, uint32_t old, uint32_t set)
     return true;
 }
 
+static unsigned ptw_cache_shift(unsigned level)
+{
+    static const uint8_t shift[5] = { [2] = 21, [3] = 30, [4] = 39 };
+
+    return shift[level];
+}
+
+static unsigned ptw_cache_hash(const TranslateParams *in, unsigned level)
+{
+    uint64_t key = in->cr3 ^ (in->addr >> ptw_cache_shift(level));
+
+    key ^= (uint64_t)in->pg_mode << 7;
+    key ^= (uint64_t)in->mmu_idx << 3;
+    key ^= (uint64_t)in->ptw_idx << 11;
+    key ^= level;
+    key ^= key >> 17;
+    key ^= key >> 9;
+    return key & (X86_PTW_CACHE_SETS - 1);
+}
+
+static bool ptw_cache_entry_matches(const X86PTWCacheEntry *entry,
+                                    const TranslateParams *in,
+                                    uint64_t generation, unsigned level)
+{
+    return entry->generation == generation && entry->level == level &&
+           entry->cr3 == in->cr3 && entry->pg_mode == in->pg_mode &&
+           entry->mmu_idx == in->mmu_idx && entry->ptw_idx == in->ptw_idx &&
+           entry->vaddr_prefix == in->addr >> ptw_cache_shift(level);
+}
+
+static unsigned ptw_cache_lookup(CPUX86State *env, const TranslateParams *in,
+                                 hwaddr *next_table, uint64_t *ptep)
+{
+    CPUTLBCommon *common = &env_cpu(env)->neg.tlb.c;
+    uint64_t generation = common->ptw_cache_generation;
+    unsigned level;
+
+    if (common->ptw_cache_mode == CPU_TLB_CACHE_OFF) {
+        return 0;
+    }
+    for (level = 2; level <= 4; level++) {
+        unsigned set = ptw_cache_hash(in, level);
+        unsigned way;
+
+        qatomic_inc(&common->ptw_cache_lookup_count[level]);
+        for (way = 0; way < X86_PTW_CACHE_WAYS; way++) {
+            X86PTWCacheEntry *entry = &env->ptw_cache[set][way];
+
+            if (!ptw_cache_entry_matches(entry, in, generation, level)) {
+                continue;
+            }
+            qatomic_inc(&common->ptw_cache_match_count[level]);
+            if (common->ptw_cache_mode == CPU_TLB_CACHE_PROBE) {
+                return 0;
+            }
+            *next_table = entry->next_table;
+            *ptep = entry->ptep;
+            qatomic_inc(&common->ptw_cache_hit_count[level]);
+            return level;
+        }
+    }
+    return 0;
+}
+
+static void ptw_cache_insert(CPUX86State *env, const TranslateParams *in,
+                             unsigned level, hwaddr next_table, uint64_t ptep)
+{
+    CPUTLBCommon *common = &env_cpu(env)->neg.tlb.c;
+    uint64_t generation = common->ptw_cache_generation;
+    X86PTWCacheEntry *entry = NULL;
+    unsigned set, way;
+
+    if (common->ptw_cache_mode == CPU_TLB_CACHE_OFF) {
+        return;
+    }
+    set = ptw_cache_hash(in, level);
+    for (way = 0; way < X86_PTW_CACHE_WAYS; way++) {
+        X86PTWCacheEntry *candidate = &env->ptw_cache[set][way];
+
+        if (ptw_cache_entry_matches(candidate, in, generation, level)) {
+            entry = candidate;
+            break;
+        }
+        if (!entry && candidate->generation != generation) {
+            entry = candidate;
+        }
+    }
+    if (!entry) {
+        way = env->ptw_cache_next[set]++ % X86_PTW_CACHE_WAYS;
+        entry = &env->ptw_cache[set][way];
+        qatomic_inc(&common->ptw_cache_evict_count[level]);
+    }
+    *entry = (X86PTWCacheEntry) {
+        .generation = generation,
+        .cr3 = in->cr3,
+        .pg_mode = in->pg_mode,
+        .ptep = ptep,
+        .vaddr_prefix = in->addr >> ptw_cache_shift(level),
+        .next_table = next_table,
+        .mmu_idx = in->mmu_idx,
+        .ptw_idx = in->ptw_idx,
+        .level = level,
+    };
+    qatomic_inc(&common->ptw_cache_insert_count[level]);
+}
+
 static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
                           TranslateResult *out, TranslateFault *err,
                           uint64_t ra)
@@ -148,14 +279,41 @@ static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
         .env = env,
         .err = err,
         .ptw_idx = in->ptw_idx,
+#ifdef QEMU_TLB_PROFILE
+        .access_type = access_type,
+        .profile_stage = in->profile_stage,
+#endif
     };
     hwaddr pte_addr, paddr;
     uint32_t pkr;
-    int page_size;
+    unsigned cached_level = 0;
+    hwaddr cached_next_table = 0;
+    uint64_t cached_ptep = 0;
+    int page_size, translation_size;
     int error_code;
     int prot;
+#ifdef QEMU_TLB_PROFILE
+    bool restarted = false;
+    int profile_stage = in->profile_stage;
+
+    /*
+     * nested_pg_mode contains only PG_MODE_SVM_MASK and therefore omits
+     * PG_MODE_PG, even though MMU_NESTED_IDX always performs an NPT walk.
+     */
+    if ((pg_mode & PG_MODE_PG) || profile_stage) {
+        qatomic_inc(&env_cpu(env)->neg.tlb.c.ptw_walk_count
+                    [profile_stage][access_type]);
+    }
+#endif
 
  restart_all:
+#ifdef QEMU_TLB_PROFILE
+    if (restarted) {
+        qatomic_inc(&env_cpu(env)->neg.tlb.c.ptw_full_restart_count
+                    [profile_stage][access_type]);
+    }
+    restarted = true;
+#endif
     rsvd_mask = ~MAKE_64BIT_MASK(0, env_archcpu(env)->phys_bits);
     rsvd_mask &= PG_ADDRESS_MASK;
     if (!(pg_mode & PG_MODE_NXE)) {
@@ -170,7 +328,7 @@ static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
                  * Page table level 5
                  */
                 pte_addr = (in->cr3 & ~0xfff) + (((addr >> 48) & 0x1ff) << 3);
-                if (!ptw_translate(&pte_trans, pte_addr, ra)) {
+                if (!PTW_TRANSLATE(&pte_trans, pte_addr, 5, ra)) {
                     return false;
                 }
             restart_5:
@@ -190,11 +348,25 @@ static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
                 ptep = PG_NX_MASK | PG_USER_MASK | PG_RW_MASK;
             }
 
+            cached_level = ptw_cache_lookup(env, in, &cached_next_table,
+                                            &cached_ptep);
+            if (cached_level) {
+                pte = cached_next_table;
+                /* Retain the freshly loaded level-5 permissions under LA57. */
+                ptep &= cached_ptep;
+                if (cached_level == 2) {
+                    goto walk_level_1;
+                } else if (cached_level == 3) {
+                    goto walk_level_2;
+                }
+                goto walk_level_3;
+            }
+
             /*
              * Page table level 4
              */
             pte_addr = (pte & PG_ADDRESS_MASK) + (((addr >> 39) & 0x1ff) << 3);
-            if (!ptw_translate(&pte_trans, pte_addr, ra)) {
+            if (!PTW_TRANSLATE(&pte_trans, pte_addr, 4, ra)) {
                 return false;
             }
         restart_4:
@@ -209,12 +381,14 @@ static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
                 goto restart_4;
             }
             ptep &= pte ^ PG_NX_MASK;
+            ptw_cache_insert(env, in, 4, pte & PG_ADDRESS_MASK, ptep);
 
+        walk_level_3:
             /*
              * Page table level 3
              */
             pte_addr = (pte & PG_ADDRESS_MASK) + (((addr >> 30) & 0x1ff) << 3);
-            if (!ptw_translate(&pte_trans, pte_addr, ra)) {
+            if (!PTW_TRANSLATE(&pte_trans, pte_addr, 3, ra)) {
                 return false;
             }
         restart_3_lma:
@@ -234,6 +408,7 @@ static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
                 page_size = 1024 * 1024 * 1024;
                 goto do_check_protect;
             }
+            ptw_cache_insert(env, in, 3, pte & PG_ADDRESS_MASK, ptep);
         } else
 #endif
         {
@@ -241,7 +416,7 @@ static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
              * Page table level 3
              */
             pte_addr = (in->cr3 & 0xffffffe0ULL) + ((addr >> 27) & 0x18);
-            if (!ptw_translate(&pte_trans, pte_addr, ra)) {
+            if (!PTW_TRANSLATE(&pte_trans, pte_addr, 3, ra)) {
                 return false;
             }
             rsvd_mask |= PG_HI_USER_MASK;
@@ -259,11 +434,12 @@ static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
             ptep = PG_NX_MASK | PG_USER_MASK | PG_RW_MASK;
         }
 
+    walk_level_2:
         /*
          * Page table level 2
          */
         pte_addr = (pte & PG_ADDRESS_MASK) + (((addr >> 21) & 0x1ff) << 3);
-        if (!ptw_translate(&pte_trans, pte_addr, ra)) {
+        if (!PTW_TRANSLATE(&pte_trans, pte_addr, 2, ra)) {
             return false;
         }
     restart_2_pae:
@@ -284,12 +460,16 @@ static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
             goto restart_2_pae;
         }
         ptep &= pte ^ PG_NX_MASK;
+        if (pg_mode & PG_MODE_LMA) {
+            ptw_cache_insert(env, in, 2, pte & PG_ADDRESS_MASK, ptep);
+        }
 
+    walk_level_1:
         /*
          * Page table level 1
          */
         pte_addr = (pte & PG_ADDRESS_MASK) + (((addr >> 12) & 0x1ff) << 3);
-        if (!ptw_translate(&pte_trans, pte_addr, ra)) {
+        if (!PTW_TRANSLATE(&pte_trans, pte_addr, 1, ra)) {
             return false;
         }
         pte = ptw_ldq(&pte_trans, ra);
@@ -307,7 +487,7 @@ static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
          * Page table level 2
          */
         pte_addr = (in->cr3 & 0xfffff000ULL) + ((addr >> 20) & 0xffc);
-        if (!ptw_translate(&pte_trans, pte_addr, ra)) {
+        if (!PTW_TRANSLATE(&pte_trans, pte_addr, 2, ra)) {
             return false;
         }
     restart_2_nopae:
@@ -336,7 +516,7 @@ static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
          * Page table level 1
          */
         pte_addr = (pte & ~0xfffu) + ((addr >> 10) & 0xffc);
-        if (!ptw_translate(&pte_trans, pte_addr, ra)) {
+        if (!PTW_TRANSLATE(&pte_trans, pte_addr, 1, ra)) {
             return false;
         }
         pte = ptw_ldl(&pte_trans, ra);
@@ -353,6 +533,7 @@ static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
          * here, but conditionally still perform an NPT walk on it later.
          */
         page_size = 0x40000000;
+        translation_size = TARGET_PAGE_SIZE;
         paddr = in->addr;
         prot = PAGE_READ | PAGE_WRITE | PAGE_EXEC;
         goto stage2;
@@ -433,6 +614,7 @@ do_check_protect_pse36:
 
     /* merge offset within page */
     paddr = (pte & PG_ADDRESS_MASK & ~(page_size - 1)) | (addr & (page_size - 1));
+    translation_size = page_size;
  stage2:
 
     /*
@@ -441,7 +623,7 @@ do_check_protect_pse36:
      */
     if (in->ptw_idx == MMU_NESTED_IDX) {
         CPUTLBEntryFull *full;
-        int flags, nested_page_size;
+        int flags, nested_page_size, nested_translation_size;
 
         flags = probe_access_full_mmu(env, paddr, 0, access_type,
                                       MMU_NESTED_IDX, &pte_trans.haddr, &full);
@@ -464,8 +646,12 @@ do_check_protect_pse36:
 
         /* Merge stage1 & stage2 addresses to final physical address. */
         nested_page_size = 1 << full->lg_page_size;
+        nested_translation_size = 1 << full->lg_translation_size;
         paddr = (full->phys_addr & ~(nested_page_size - 1))
               | (paddr & (nested_page_size - 1));
+
+        /* Only the intersection of both linear mappings is reusable. */
+        translation_size = MIN(translation_size, nested_translation_size);
 
         /*
          * Use the larger of stage1 & stage2 page sizes, so that
@@ -479,6 +665,7 @@ do_check_protect_pse36:
     out->paddr = paddr & x86_get_a20_mask(env);
     out->prot = prot;
     out->page_size = page_size;
+    out->translation_size = translation_size;
     return true;
 
  do_fault_rsvd:
@@ -549,6 +736,10 @@ static bool get_physical_address(CPUX86State *env, vaddr addr,
 
     in.addr = addr;
     in.access_type = access_type;
+#ifdef QEMU_TLB_PROFILE
+    /* Preserve the requested translation stage before mmu_idx is rewritten. */
+    in.profile_stage = mmu_idx == MMU_NESTED_IDX;
+#endif
 
     switch (mmu_idx) {
     case MMU_PHYS_IDX:
@@ -602,6 +793,7 @@ static bool get_physical_address(CPUX86State *env, vaddr addr,
     out->paddr = addr & x86_get_a20_mask(env);
     out->prot = PAGE_READ | PAGE_WRITE | PAGE_EXEC;
     out->page_size = TARGET_PAGE_SIZE;
+    out->translation_size = TARGET_PAGE_SIZE;
     return true;
 }
 
@@ -615,15 +807,20 @@ bool x86_cpu_tlb_fill(CPUState *cs, vaddr addr, int size,
 
     if (get_physical_address(env, addr, access_type, mmu_idx, &out, &err,
                              retaddr)) {
+        CPUTLBEntryFull full = {
+            .phys_addr = out.paddr & TARGET_PAGE_MASK,
+            .attrs = cpu_get_mem_attrs(env),
+            .prot = out.prot,
+            .lg_page_size = ctz64(out.page_size),
+            .lg_translation_size = ctz64(out.translation_size),
+        };
+
         /*
          * Even if 4MB pages, we map only one 4KB page in the cache to
          * avoid filling it too fast.
          */
         assert(out.prot & (1 << access_type));
-        tlb_set_page_with_attrs(cs, addr & TARGET_PAGE_MASK,
-                                out.paddr & TARGET_PAGE_MASK,
-                                cpu_get_mem_attrs(env),
-                                out.prot, mmu_idx, out.page_size);
+        tlb_set_page_full(cs, mmu_idx, addr & TARGET_PAGE_MASK, &full);
         return true;
     }
 

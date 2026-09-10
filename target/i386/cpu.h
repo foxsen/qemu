@@ -1591,6 +1591,21 @@ typedef struct HVFX86LazyFlags {
     target_ulong auxbits;
 } HVFX86LazyFlags;
 
+#define X86_PTW_CACHE_SETS 64
+#define X86_PTW_CACHE_WAYS 4
+
+typedef struct X86PTWCacheEntry {
+    uint64_t generation;
+    uint64_t cr3;
+    uint64_t pg_mode;
+    uint64_t ptep;
+    target_ulong vaddr_prefix;
+    hwaddr next_table;
+    int16_t mmu_idx;
+    int16_t ptw_idx;
+    uint8_t level;
+} X86PTWCacheEntry;
+
 typedef struct CPUArchState {
     /* standard registers */
     target_ulong regs[CPU_NB_REGS];
@@ -1787,6 +1802,9 @@ typedef struct CPUArchState {
     uint8_t nmi_pending;
 
     uintptr_t retaddr;
+
+    X86PTWCacheEntry ptw_cache[X86_PTW_CACHE_SETS][X86_PTW_CACHE_WAYS];
+    uint8_t ptw_cache_next[X86_PTW_CACHE_SETS];
 
     /* Fields up to this point are cleared by a CPU reset */
     struct {} end_reset_fields;

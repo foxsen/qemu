@@ -202,6 +202,16 @@ struct CPUClass {
 /* Use a fully associative victim tlb of 8 entries. */
 #define CPU_VTLB_SIZE 8
 
+/* Experimental miss-path cache for target translations of large pages. */
+#define CPU_LP_TLB_SETS 32
+#define CPU_LP_TLB_WAYS 4
+
+typedef enum CPUTLBExperimentalCacheMode {
+    CPU_TLB_CACHE_OFF,
+    CPU_TLB_CACHE_ON,
+    CPU_TLB_CACHE_PROBE,
+} CPUTLBExperimentalCacheMode;
+
 /*
  * The full TLB entry, which is not accessed by generated TCG code,
  * so the layout is not as critical as that of CPUTLBEntry. This is
@@ -235,6 +245,14 @@ typedef struct CPUTLBEntryFull {
     uint8_t lg_page_size;
 
     /*
+     * @lg_translation_size is the log2 of the range over which phys_addr
+     * can be reconstructed linearly.  This can be smaller than
+     * lg_page_size when the latter is widened for invalidation purposes.
+     * Zero means that the target did not provide this optional property.
+     */
+    uint8_t lg_translation_size;
+
+    /*
      * Additional tlb flags for use by the slow path. If non-zero,
      * the corresponding CPUTLBEntry comparator must have TLB_FORCE_SLOW.
      */
@@ -262,6 +280,13 @@ typedef struct CPUTLBEntryFull {
     } extra;
 } CPUTLBEntryFull;
 
+typedef struct CPUTLBLargePageEntry {
+    CPUTLBEntryFull full;
+    vaddr vaddr_base;
+    hwaddr paddr_base;
+    uint64_t generation;
+} CPUTLBLargePageEntry;
+
 /*
  * Data elements that are per MMU mode, minus the bits accessed by
  * the TCG fast path.
@@ -285,6 +310,10 @@ typedef struct CPUTLBDesc {
     /* The tlb victim table, in two parts.  */
     CPUTLBEntry vtable[CPU_VTLB_SIZE];
     CPUTLBEntryFull vfulltlb[CPU_VTLB_SIZE];
+    CPUTLBLargePageEntry *lp_tlb;
+    uint8_t lp_tlb_next[CPU_LP_TLB_SETS];
+    uint64_t lp_tlb_page_bits;
+    uint64_t lp_tlb_generation;
     CPUTLBEntryFull *fulltlb;
 } CPUTLBDesc;
 
@@ -308,6 +337,49 @@ typedef struct CPUTLBCommon {
     size_t full_flush_count;
     size_t part_flush_count;
     size_t elide_flush_count;
+
+    /* Experimental large-page miss-path cache configuration and counters. */
+    uint8_t lp_tlb_mode;
+    bool lp_tlb_replay;
+    size_t lp_tlb_lookup_count;
+    size_t lp_tlb_match_count;
+    size_t lp_tlb_hit_count;
+    size_t lp_tlb_insert_count;
+    size_t lp_tlb_evict_count;
+    size_t lp_tlb_flush_count;
+
+    /* Experimental x86 L2--L4 non-leaf page-table cache. */
+    uint8_t ptw_cache_mode;
+    uint64_t ptw_cache_generation;
+    size_t ptw_cache_lookup_count[5];
+    size_t ptw_cache_match_count[5];
+    size_t ptw_cache_hit_count[5];
+    size_t ptw_cache_insert_count[5];
+    size_t ptw_cache_evict_count[5];
+    size_t ptw_cache_flush_count;
+
+#ifdef QEMU_TLB_PROFILE
+    /*
+     * Experimental SoftMMU profiling counters.  They deliberately count
+     * only slow-path events: counting every fast-path hit would perturb each
+     * generated guest memory access.  Obtain the fast-path denominator in a
+     * separate run with the TCG memory-counting plugin.
+     */
+    size_t l1_miss_count[MMU_ACCESS_COUNT];
+    size_t victim_hit_count[MMU_ACCESS_COUNT];
+    size_t fill_call_count[MMU_ACCESS_COUNT];
+    /* Call-site breakdown: helper, probe (including PTW), and atomic. */
+    size_t origin_l1_miss_count[3][MMU_ACCESS_COUNT];
+    size_t origin_victim_hit_count[3][MMU_ACCESS_COUNT];
+    size_t origin_fill_call_count[3][MMU_ACCESS_COUNT];
+    size_t origin_lp_tlb_hit_count[3][MMU_ACCESS_COUNT];
+    size_t fill_install_count;
+    size_t fill_page_bits[64];
+    /* x86 primary/nested page walks; index 0 of the level array is unused. */
+    size_t ptw_walk_count[2][MMU_ACCESS_COUNT];
+    size_t ptw_full_restart_count[2][MMU_ACCESS_COUNT];
+    size_t ptw_level_count[2][MMU_ACCESS_COUNT][6];
+#endif
 } CPUTLBCommon;
 
 /*
