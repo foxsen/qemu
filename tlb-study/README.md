@@ -7,7 +7,9 @@ Emulators* ([TACO DOI](https://doi.org/10.1145/2686034),
 [IBM report](https://dominoweb.draco.res.ibm.com/reports/RT0956.pdf)).
 
 `REPORT_ZH.md` gives a concise Chinese interpretation of the current evidence;
-`PILOT_RESULTS.md` retains the detailed measurements and caveats.
+`FIXED_TLB_NOVICTIM_RESULTS_ZH.md` records the fixed-4096/no-victim attribution
+experiment and its scope relative to TACO's 38.1% result; `PILOT_RESULTS.md`
+retains the detailed measurements and caveats.
 
 ## Scope and Method
 
@@ -323,6 +325,10 @@ guest THP forced to `always`:
 ./tlb-study/summarize-optimizations.py \
   tlb-study/results/opt-{mcf,gapbs,nested}-{base,lp,ptw}-r0[1-3]
 ```
+
+Add `--perf --perf-event cpu_core/cycles/u --no-perfmap` to collect named
+SoftMMU time attribution, and use `--tlb-entries 4096 --victim-tlb off` for the
+fixed-table ablation. Keep perf attribution separate from uninstrumented timing.
 
 Use a fresh `--name-tag` when the implementation changes, and validate promoted
 cloud results with `--require-provenance`. The caches are x86 system-emulation

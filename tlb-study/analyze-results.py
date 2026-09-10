@@ -304,6 +304,9 @@ def summarize(result_dir):
             ),
         }
     delta = result.get("tlb_delta", {})
+    tlb_config = result.get("tlb_after", {}).get("tlb_config")
+    if tlb_config:
+        summary["tlb_config"] = tlb_config
     accesses = summary.get("guest_accesses", 0)
     if delta:
         l1_miss = sum_access(delta, "l1_miss")

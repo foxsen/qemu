@@ -80,20 +80,27 @@ class ProvenanceTest(unittest.TestCase):
 
     def test_run_options_include_machine_configuration(self):
         options = RUNNER.run_options_record(SimpleNamespace(
-            cpu="2", memory="1G", smp=1, ssh_port=2222,
-            perf=True, perf_frequency=99, perf_callgraph=False,
+            cpu="2", nice=-20, memory="1G", smp=1, ssh_port=2222,
+            perf=True, perf_frequency=99, perf_event="cpu_core/cycles/u",
+            perf_callgraph=False,
             perfmap=False, plugin_window=False, snapshot=True,
             large_page_cache="on",
             ptw_cache="probe",
+            tlb_entries=4096,
+            victim_tlb="off",
             guest_thp="always",
         ))
         self.assertEqual(options["cpu"], "2")
+        self.assertEqual(options["nice"], -20)
         self.assertEqual(options["memory"], "1G")
         self.assertEqual(options["smp"], 1)
         self.assertEqual(options["ssh_port"], 2222)
         self.assertEqual(options["perf_frequency"], 99)
+        self.assertEqual(options["perf_event"], "cpu_core/cycles/u")
         self.assertEqual(options["large_page_cache"], "on")
         self.assertEqual(options["ptw_cache"], "probe")
+        self.assertEqual(options["tlb_entries"], 4096)
+        self.assertEqual(options["victim_tlb"], "off")
         self.assertEqual(options["guest_thp"], "always")
 
     def test_guest_thp_policy_is_part_of_prepare_command(self):
@@ -131,6 +138,21 @@ class ProvenanceTest(unittest.TestCase):
         self.assertEqual(parsed["ptw_cache"]["mode"], "on")
         self.assertEqual(parsed["ptw_cache"]["flush"], 4)
         self.assertEqual(parsed["ptw_cache"]["levels"]["2"]["hit"], 15)
+
+    def test_fixed_tlb_config_parser_validation_and_delta(self):
+        parsed = HELPERS.parse_tlb(
+            "SoftMMU TLB config fixed_entries=4096 victim=off "
+            "current_min=4096 current_max=4096\n"
+        )
+        self.assertEqual(parsed["tlb_config"]["fixed_entries"], 4096)
+        self.assertEqual(parsed["tlb_config"]["victim"], "off")
+        HELPERS.validate_tlb_config(parsed, 4096, "off")
+        delta = HELPERS.subtract(parsed, parsed)
+        self.assertEqual(delta["tlb_config"], parsed["tlb_config"])
+        with self.assertRaises(ValueError):
+            HELPERS.validate_tlb_config(parsed, 2048, "off")
+        with self.assertRaises(ValueError):
+            HELPERS.validate_tlb_config(parsed, 4096, "on")
 
 
 if __name__ == "__main__":

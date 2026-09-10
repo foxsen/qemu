@@ -47,8 +47,8 @@ def main():
     }
     print("| workload | variant | n | wall median (s) | "
           "stress bogo ops/s | performance ratio | LP hit/lookup | "
-          "PTW hit/lookup | THP always |")
-    print("|---|---|---:|---:|---:|---:|---:|---:|:---:|")
+          "PTW hit/lookup | TLB entries | victim | THP always |")
+    print("|---|---|---:|---:|---:|---:|---:|---:|---:|:---:|:---:|")
     for (workload, variant), items in sorted(groups.items()):
         walls = [item["wall_seconds"] for item, _ in items]
         median = statistics.median(walls)
@@ -60,6 +60,7 @@ def main():
                        if len(stress_rates) == len(items) else None)
         lp_hits = lp_lookups = ptw_hits = ptw_lookups = 0
         thp_ok = True
+        configs = set()
         for item, path in items:
             lp = item.get("tlb", {}).get("large_page_cache", {})
             lp_hits += lp.get("hit", 0)
@@ -67,8 +68,14 @@ def main():
             ptw = item.get("ptw_cache", {}).get("levels", {})
             ptw_hits += sum(row.get("hit", 0) for row in ptw.values())
             ptw_lookups += sum(row.get("lookup", 0) for row in ptw.values())
+            config = item.get("tlb_config", {})
+            configs.add((config.get("fixed_entries"),
+                         config.get("victim")))
             prep = path / "prepare.log"
             thp_ok &= prep.is_file() and "[always]" in prep.read_text()
+        if len(configs) != 1 or None in next(iter(configs)):
+            parser.error(f"inconsistent or missing TLB config for {items}")
+        tlb_entries, victim = configs.pop()
         if baseline and stress_rate is not None:
             performance_ratio = stress_rate / baseline["stress_rate"]
         elif baseline:
@@ -82,6 +89,7 @@ def main():
               f"{stress_text} | {ratio_text} | "
               f"{100 * ratio(lp_hits, lp_lookups):.2f}% | "
               f"{100 * ratio(ptw_hits, ptw_lookups):.2f}% | "
+              f"{tlb_entries or 'dynamic'} | {victim} | "
               f"{'yes' if thp_ok else 'no'} |")
 
 

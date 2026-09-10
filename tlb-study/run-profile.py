@@ -63,6 +63,17 @@ def prepare_result_dir(path):
 
 def parse_tlb(text):
     result = {}
+    match = re.search(
+        r"SoftMMU TLB config fixed_entries=(\d+) victim=(on|off) "
+        r"current_min=(\d+) current_max=(\d+)", text
+    )
+    if match:
+        result["tlb_config"] = {
+            "fixed_entries": int(match.group(1)),
+            "victim": match.group(2),
+            "current_min": int(match.group(3)),
+            "current_max": int(match.group(4)),
+        }
     for kind, miss, victim, fill in re.findall(
         r"TLB (load|store|fetch)\s+l1_miss=(\d+) victim_hit=(\d+) "
         r"fill_call=(\d+)", text
@@ -161,11 +172,35 @@ def parse_tlb(text):
 def subtract(after, before):
     if isinstance(after, dict):
         before = before if isinstance(before, dict) else {}
-        return {key: subtract(value, before.get(key, 0))
+        return {key: (value if key == "tlb_config" else
+                      subtract(value, before.get(key, 0)))
                 for key, value in after.items()}
     if isinstance(after, (int, float)):
         return after - before
     return after
+
+
+def validate_tlb_config(parsed, fixed_entries, victim):
+    config = parsed.get("tlb_config")
+    if not config:
+        raise ValueError("info jit did not report the SoftMMU TLB config")
+    if config["fixed_entries"] != fixed_entries:
+        raise ValueError(
+            "SoftMMU TLB fixed-entry mismatch: "
+            f"expected {fixed_entries}, got {config['fixed_entries']}"
+        )
+    if fixed_entries and (
+            config["current_min"] != fixed_entries or
+            config["current_max"] != fixed_entries):
+        raise ValueError(
+            "SoftMMU TLB resized despite fixed configuration: "
+            f"min={config['current_min']} max={config['current_max']}"
+        )
+    if config["victim"] != victim:
+        raise ValueError(
+            "SoftMMU victim-TLB mismatch: "
+            f"expected {victim}, got {config['victim']}"
+        )
 
 
 def process_cpu_seconds(pid):
@@ -175,6 +210,24 @@ def process_cpu_seconds(pid):
         fields = stat_path.read_text().split()
         total += int(fields[13]) + int(fields[14])
     return total / ticks
+
+
+def set_process_nice(pid, requested):
+    if not -20 <= requested <= 19:
+        raise ValueError("nice value must be between -20 and 19")
+    if requested < 0:
+        subprocess.run(
+            ["sudo", "-n", "renice", "-n", str(requested), "-p", str(pid)],
+            check=True, stdout=subprocess.DEVNULL,
+        )
+    else:
+        os.setpriority(os.PRIO_PROCESS, pid, requested)
+    actual = os.getpriority(os.PRIO_PROCESS, pid)
+    if actual != requested:
+        raise RuntimeError(
+            f"QEMU nice mismatch: expected {requested}, got {actual}"
+        )
+    return actual
 
 
 def descendants(pid):
@@ -220,8 +273,10 @@ def main():
                         choices=["huge", "nohuge"])
     parser.add_argument("--name")
     parser.add_argument("--cpu", default="2")
+    parser.add_argument("--nice", type=int, default=0)
     parser.add_argument("--perf", action="store_true")
     parser.add_argument("--perf-frequency", type=int, default=997)
+    parser.add_argument("--perf-event", default="cpu_core/cycles/u")
     parser.add_argument("--perf-callgraph", action="store_true")
     parser.add_argument("--perfmap", action=argparse.BooleanOptionalAction,
                         default=True,
@@ -237,7 +292,20 @@ def main():
         "--ptw-cache", choices=("off", "on", "probe"), default="off",
         help="experimental x86 L2--L4 non-leaf page-table cache mode",
     )
+    parser.add_argument(
+        "--tlb-entries", type=int, default=0,
+        help="fix each SoftMMU TLB to this power-of-two entry count",
+    )
+    parser.add_argument(
+        "--victim-tlb", choices=("on", "off"), default="on",
+        help="enable or disable the eight-entry victim TLB",
+    )
     args = parser.parse_args()
+
+    if args.tlb_entries < 0 or (
+            args.tlb_entries and
+            args.tlb_entries & (args.tlb_entries - 1)):
+        parser.error("--tlb-entries must be zero or a power of two")
 
     name = args.name or (f"{args.mode}-{args.mib}m-{args.passes}p-"
                          f"{args.page_mode}")
@@ -278,8 +346,14 @@ def main():
     qemu_env = os.environ.copy()
     qemu_env["QEMU_SOFTMMU_LP_CACHE"] = args.large_page_cache
     qemu_env["QEMU_X86_PTW_CACHE"] = args.ptw_cache
+    qemu_env["QEMU_SOFTMMU_VICTIM_TLB"] = args.victim_tlb
+    if args.tlb_entries:
+        qemu_env["QEMU_SOFTMMU_TLB_ENTRIES"] = str(args.tlb_entries)
+    else:
+        qemu_env.pop("QEMU_SOFTMMU_TLB_ENTRIES", None)
     with stderr_path.open("wb") as stderr_file:
         qemu = subprocess.Popen(cmd, stderr=stderr_file, env=qemu_env)
+    qemu_nice = set_process_nice(qemu.pid, args.nice)
     qmp = QMP(qmp_path)
     serial = connect_unix(serial_path)
     console = bytearray()
@@ -301,12 +375,15 @@ def main():
             if not before_text and "TLB-BENCH-READY" in decoded:
                 qmp.command("stop")
                 before_text = qmp.hmp("info jit")
+                validate_tlb_config(parse_tlb(before_text),
+                                    args.tlb_entries, args.victim_tlb)
                 before_cpu = process_cpu_seconds(qemu.pid)
                 before_wall = time.monotonic_ns()
                 if args.perf:
                     perf_cmd = [
-                        "sudo", "-n", "perf", "record", "-F",
-                        str(args.perf_frequency), "-p", str(qemu.pid),
+                        "sudo", "-n", "perf", "record", "-e",
+                        args.perf_event, "-F", str(args.perf_frequency),
+                        "-p", str(qemu.pid),
                         "-o", str(perf_path),
                     ]
                     if args.perf_callgraph:
@@ -340,6 +417,8 @@ def main():
     (result_dir / "console.log").write_bytes(console)
     before = parse_tlb(before_text)
     after = parse_tlb(after_text)
+    if after:
+        validate_tlb_config(after, args.tlb_entries, args.victim_tlb)
     report = {
         "name": name,
         "command": cmd,
@@ -349,6 +428,7 @@ def main():
         "workload": vars(args) | {"qemu": str(args.qemu)},
         "wall_seconds": (after_wall - before_wall) / 1e9,
         "qemu_cpu_seconds": after_cpu - before_cpu,
+        "qemu_nice": qemu_nice,
         "tlb_before": before,
         "tlb_after": after,
         "tlb_delta": subtract(after, before) if after else {},

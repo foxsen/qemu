@@ -459,7 +459,28 @@ $$
 带来收益：命中率的分母是已经通过主表和 victim 过滤的少数事件，缓存查询、哈希、
 原子计数和普通 4 KiB 项安装仍然存在。
 
-### 6.5 对研究问题的回答
+### 6.5 固定主表并关闭 victim 后的时间归因
+
+为检查动态扩容和 victim 是否掩盖了早期论文中的访存开销，本文新增固定容量消融：
+每个 MMU mode 的主 SoftTLB 固定为 4096 项，关闭 8-entry victim TLB，并在
+i7-1260P 的 P-Core logical CPU 7 上以 nice -20 运行；CPU 6/7 的 scaling
+min/max 均请求为 2.1 GHz。perf 使用 P-Core 的 `cpu_core/cycles/u` 事件，LP/PTW
+实验 cache 均关闭。
+
+六个系统负载的 named SoftMMU 占比分别为 sysbench 0.47%、DaCapo 8.70%、
+GAPBS 11.49%、nested QEMU 14.62%、stress-ng shootdown 20.85% 和 `429.mcf`
+24.18%；等权平均 13.39%，中位数 13.05%。因此，在这个配置下可命名慢路径没有
+接近 TACO 报告的 38.1%，最高的 mcf 也未达到 30%。相反，刻意制造持续 miss 的
+128 MiB 随机页微基准达到约 95%，证明 workload 选择可以把相同实现从低占比推到
+几乎完全受慢路径支配。
+
+该消融仍不能复刻 TACO 的完整口径：JIT 中内联的 fast-hit lookup 被归入 guest
+JIT，无法与客户机有效计算分离。故 13.39% 是当前可归因慢路径的下界，而不是全部
+访存模拟开销。每个系统负载当前只有一次 perf 运行，虽有 6,834--100,696 条有效
+样本并全部通过 provenance/配置校验，发表版仍需重复采样。完整数据和复现命令见
+`FIXED_TLB_NOVICTIM_RESULTS_ZH.md`。
+
+### 6.6 对研究问题的回答
 
 - **RQ1：** 现代 SoftTLB 的 refill 确实稀少，但剩余事件代价高；“事件低频”不能
   推导出“慢路径时间可忽略”。
@@ -535,9 +556,11 @@ churn 和实际节省的层访问动态启停；对 PTW cache 比较只查 L3、
 
 ## 8 局限性与有效性威胁
 
-**测量环境。** 当前实验只有一台 i7-1260P 宿主，使用 `powersave` governor，未隔离
-整机后台任务。应用优化对比仅 3 次，短 workload 约 5 s，不能区分 2%--5% 信号与
-系统噪声。现有正向中位数应视为筛选线索，而非显著性结论。
+**测量环境。** 当前实验只有一台 i7-1260P 宿主。早期应用 A/B 使用 `powersave`
+governor，未隔离整机后台任务；新增固定 TLB 时间归因绑定 P-Core、提高优先级并将
+scaling min/max 请求为 2.1 GHz，但同一物理核的 SMT sibling 仍在线，且硬件仍可因
+温度或功耗保护降频。应用优化对比仅 3 次，固定 TLB 系统负载各 1 次 perf；短
+workload 不能区分小信号与系统噪声。现有结果应视为筛选线索而非显著性结论。
 
 **实现范围。** 原型目前聚焦 x86-64、单 vCPU、single-thread TCG。大页 cache 的
 容器位于通用 SoftMMU 层，但可线性范围由 x86 target 显式提供；其他 target 尚未验证。

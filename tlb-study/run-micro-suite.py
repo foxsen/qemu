@@ -30,7 +30,12 @@ def main():
     parser.add_argument(
         "--ptw-cache", choices=("off", "on", "probe"), default="off",
     )
+    parser.add_argument("--tlb-entries", type=int, default=0)
+    parser.add_argument("--victim-tlb", choices=("on", "off"), default="on")
     parser.add_argument("--name-tag", default="")
+    parser.add_argument("--cpu", default="2")
+    parser.add_argument("--nice", type=int, default=0)
+    parser.add_argument("--perf-event", default="cpu_core/cycles/u")
     args = parser.parse_args()
     chosen = args.workloads.split(",")
     unknown = sorted(set(chosen) - set(MATRIX))
@@ -49,6 +54,10 @@ def main():
                 f"suite-{args.phase}-{label}{tag}-r{repetition:02d}",
                 "--large-page-cache", args.large_page_cache,
                 "--ptw-cache", args.ptw_cache,
+                "--tlb-entries", str(args.tlb_entries),
+                "--victim-tlb", args.victim_tlb,
+                "--cpu", args.cpu, "--nice", str(args.nice),
+                "--perf-event", args.perf_event,
             ]
             if args.phase == "perf":
                 cmd.append("--perf")

@@ -82,6 +82,12 @@ def host_record(cpu):
     fields = {}
     for name, relative in {
             "governor": "cpufreq/scaling_governor",
+            "scaling_driver": "cpufreq/scaling_driver",
+            "scaling_min_khz": "cpufreq/scaling_min_freq",
+            "scaling_max_khz": "cpufreq/scaling_max_freq",
+            "base_frequency_khz": "cpufreq/base_frequency",
+            "energy_performance_preference":
+                "cpufreq/energy_performance_preference",
             "thread_siblings": "topology/thread_siblings_list",
             "core_id": "topology/core_id",
             "package_id": "topology/physical_package_id",
@@ -93,6 +99,7 @@ def host_record(cpu):
         if line.startswith("model name"):
             model = line.split(":", 1)[1].strip()
             break
+    no_turbo = Path("/sys/devices/system/cpu/intel_pstate/no_turbo")
     return {
         "uname": platform.uname()._asdict(),
         "cpu_model": model,
@@ -100,6 +107,9 @@ def host_record(cpu):
         "first_logical_cpu": first_cpu,
         "process_affinity": sorted(os.sched_getaffinity(0)),
         "perf_version": command_text(["perf", "--version"]),
+        "intel_pstate_no_turbo": (
+            no_turbo.read_text().strip() if no_turbo.exists() else None
+        ),
         **fields,
     }
 
@@ -130,17 +140,21 @@ def disk_record(path, exact_hash):
 def run_options_record(args):
     return {
         "cpu": args.cpu,
+        "nice": args.nice,
         "memory": args.memory,
         "smp": args.smp,
         "ssh_port": args.ssh_port,
         "perf": args.perf,
         "perf_frequency": args.perf_frequency if args.perf else None,
+        "perf_event": args.perf_event if args.perf else None,
         "perf_callgraph": args.perf_callgraph,
         "perfmap": args.perfmap,
         "plugin_window": args.plugin_window,
         "snapshot": args.snapshot,
         "large_page_cache": args.large_page_cache,
         "ptw_cache": args.ptw_cache,
+        "tlb_entries": args.tlb_entries,
+        "victim_tlb": args.victim_tlb,
         "guest_thp": args.guest_thp,
     }
 
@@ -217,6 +231,7 @@ def main():
                         help="guest setup performed before the READY barrier")
     parser.add_argument("--name", required=True)
     parser.add_argument("--cpu", default="2")
+    parser.add_argument("--nice", type=int, default=0)
     parser.add_argument("--disk", type=Path,
                         default=here / "images/debian-12-tlb-overlay.qcow2")
     parser.add_argument("--seed", type=Path,
@@ -230,6 +245,7 @@ def main():
     parser.add_argument("--ssh-port", type=int, default=2222)
     parser.add_argument("--perf", action="store_true")
     parser.add_argument("--perf-frequency", type=int, default=997)
+    parser.add_argument("--perf-event", default="cpu_core/cycles/u")
     parser.add_argument("--perf-callgraph", action="store_true")
     parser.add_argument("--perfmap", action=argparse.BooleanOptionalAction,
                         default=True,
@@ -245,6 +261,14 @@ def main():
     parser.add_argument(
         "--ptw-cache", choices=("off", "on", "probe"), default="off",
         help="experimental x86 L2--L4 non-leaf page-table cache mode",
+    )
+    parser.add_argument(
+        "--tlb-entries", type=int, default=0,
+        help="fix each SoftMMU TLB to this power-of-two entry count",
+    )
+    parser.add_argument(
+        "--victim-tlb", choices=("on", "off"), default="on",
+        help="enable or disable the eight-entry victim TLB",
     )
     parser.add_argument(
         "--guest-thp", choices=("leave", "always", "madvise", "never"),
@@ -278,6 +302,10 @@ def main():
     )
     if args.smp < 1:
         parser.error("--smp must be positive")
+    if args.tlb_entries < 0 or (
+            args.tlb_entries and
+            args.tlb_entries & (args.tlb_entries - 1)):
+        parser.error("--tlb-entries must be zero or a power of two")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.name):
         parser.error(
             "--name must contain only letters, digits, '.', '_' and '-'"
@@ -342,10 +370,16 @@ def main():
     qemu_env = os.environ.copy()
     qemu_env["QEMU_SOFTMMU_LP_CACHE"] = args.large_page_cache
     qemu_env["QEMU_X86_PTW_CACHE"] = args.ptw_cache
+    qemu_env["QEMU_SOFTMMU_VICTIM_TLB"] = args.victim_tlb
+    if args.tlb_entries:
+        qemu_env["QEMU_SOFTMMU_TLB_ENTRIES"] = str(args.tlb_entries)
+    else:
+        qemu_env.pop("QEMU_SOFTMMU_TLB_ENTRIES", None)
     with ((result_dir / "qemu.stdout").open("wb") as stdout,
           (result_dir / "qemu.stderr").open("wb") as stderr):
         qemu = subprocess.Popen(cmd, stdout=stdout, stderr=stderr,
                                 env=qemu_env)
+    qemu_nice = helpers.set_process_nice(qemu.pid, args.nice)
     key = here / "images/tlb-study-key"
     ssh = ssh_base(key, args.ssh_port)
     perf = None
@@ -400,14 +434,16 @@ def main():
             raise RuntimeError("remote workload did not reach ready barrier")
         qmp.command("stop")
         before_text = qmp.hmp("info jit")
+        helpers.validate_tlb_config(helpers.parse_tlb(before_text),
+                                    args.tlb_entries, args.victim_tlb)
         before_cpu = helpers.process_cpu_seconds(qemu.pid)
         measurement_started_utc = utc_now()
         before_wall = time.monotonic_ns()
         perf_path = result_dir / "perf.data"
         if args.perf:
             perf_cmd = [
-                "sudo", "-n", "perf", "record", "-F",
-                str(args.perf_frequency), "-p", str(qemu.pid),
+                "sudo", "-n", "perf", "record", "-e", args.perf_event,
+                "-F", str(args.perf_frequency), "-p", str(qemu.pid),
                 "-o", str(perf_path),
             ]
             if args.perf_callgraph:
@@ -442,6 +478,8 @@ def main():
             helpers.stop_perf(perf)
         before = helpers.parse_tlb(before_text)
         after = helpers.parse_tlb(after_text)
+        helpers.validate_tlb_config(after, args.tlb_entries,
+                                    args.victim_tlb)
         report = {
             "name": args.name, "command": cmd,
             "guest_command": args.command,
@@ -455,6 +493,7 @@ def main():
             "measurement_ended_utc": measurement_ended_utc,
             "wall_seconds": (after_wall - before_wall) / 1e9,
             "qemu_cpu_seconds": after_cpu - before_cpu,
+            "qemu_nice": qemu_nice,
             "tlb_before": before, "tlb_after": after,
             "tlb_delta": helpers.subtract(after, before) if after else {},
             "info_jit_before": before_text, "info_jit_after": after_text,
@@ -483,13 +522,18 @@ def main():
             workload.stdin.write("\n")
             workload.stdin.flush()
             workload.wait(timeout=30)
-        subprocess.run(ssh + ["sudo", "poweroff"], timeout=20,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        try:
-            qemu.wait(timeout=60)
-        except subprocess.TimeoutExpired:
+        if args.snapshot:
             qmp.command("quit")
             qemu.wait(timeout=10)
+        else:
+            subprocess.run(ssh + ["sudo", "poweroff"], timeout=20,
+                           stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL)
+            try:
+                qemu.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                qmp.command("quit")
+                qemu.wait(timeout=10)
         if done is None:
             raise RuntimeError("remote workload exited before DONE marker")
         if remote_rc != 0:

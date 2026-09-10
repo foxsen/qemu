@@ -86,13 +86,25 @@ def main():
     parser.add_argument("--variant", action="append", choices=VARIANTS)
     parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument("--cpu", default="2")
+    parser.add_argument("--nice", type=int, default=0)
     parser.add_argument("--name-tag", default="")
+    parser.add_argument("--tlb-entries", type=int, default=0)
+    parser.add_argument("--victim-tlb", choices=("on", "off"), default="on")
+    parser.add_argument("--perf", action="store_true")
+    parser.add_argument("--perf-frequency", type=int, default=997)
+    parser.add_argument("--perf-event", default="cpu_core/cycles/u")
+    parser.add_argument("--perfmap", action=argparse.BooleanOptionalAction,
+                        default=True)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--resume", action="store_true",
                         help="skip result directories that already contain result.json")
     args = parser.parse_args()
     if args.repetitions < 1:
         parser.error("--repetitions must be positive")
+    if args.tlb_entries < 0 or (
+            args.tlb_entries and
+            args.tlb_entries & (args.tlb_entries - 1)):
+        parser.error("--tlb-entries must be zero or a power of two")
     if args.name_tag and not re.fullmatch(
             r"[A-Za-z0-9][A-Za-z0-9._-]*", args.name_tag):
         parser.error("--name-tag contains unsupported characters")
@@ -116,12 +128,23 @@ def main():
                 command = [
                     sys.executable, str(here / "run-cloud-profile.py"),
                     "--qemu", str(qemu), "--name", name,
-                    "--cpu", args.cpu, "--snapshot", "--guest-thp", "always",
+                    "--cpu", args.cpu, "--nice", str(args.nice),
+                    "--snapshot", "--guest-thp", "always",
                     "--large-page-cache", lp_mode, "--ptw-cache", ptw_mode,
+                    "--tlb-entries", str(args.tlb_entries),
+                    "--victim-tlb", args.victim_tlb,
                     "--memory", config.get("memory", "1G"),
                     "--prepare-command", config.get("prepare", "true"),
                     "--command", config["command"],
                 ]
+                if args.perf:
+                    command.extend([
+                        "--perf", "--perf-frequency",
+                        str(args.perf_frequency), "--perf-event",
+                        args.perf_event,
+                    ])
+                    if not args.perfmap:
+                        command.append("--no-perfmap")
                 for path in config.get("copy", []):
                     if not path.is_file():
                         parser.error(f"workload input does not exist: {path}")
