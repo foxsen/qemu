@@ -374,6 +374,9 @@ guest THP forced to `always`:
 Add `--perf --perf-event cpu_core/cycles/u --no-perfmap` to collect named
 SoftMMU time attribution, and use `--tlb-entries 4096 --victim-tlb off` for the
 fixed-table ablation. Keep perf attribution separate from uninstrumented timing.
+The optimization suite disables QEMU JIT perf-map generation by default for
+both timing and profiling runs; use `--perfmap` only when guest-JIT symbols are
+required.  This avoids timing I/O and stale `/tmp/perf-<pid>.map` files.
 
 Use a fresh `--name-tag` when the implementation changes, and validate promoted
 cloud results with `--require-provenance`. The caches are x86 system-emulation

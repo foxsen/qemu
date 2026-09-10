@@ -112,7 +112,8 @@ def main():
     parser.add_argument("--perf-frequency", type=int, default=997)
     parser.add_argument("--perf-event", default="cpu_core/cycles/u")
     parser.add_argument("--perfmap", action=argparse.BooleanOptionalAction,
-                        default=True)
+                        default=False,
+                        help="emit QEMU JIT symbols (disabled for timing)")
     parser.add_argument("--shuffle-seed", type=int,
                         help="shuffle workload/variant order per repetition")
     parser.add_argument("--dry-run", action="store_true")
@@ -167,8 +168,8 @@ def main():
                     str(args.perf_frequency), "--perf-event",
                     args.perf_event,
                 ])
-                if not args.perfmap:
-                    command.append("--no-perfmap")
+            if not args.perfmap:
+                command.append("--no-perfmap")
             for path in config.get("copy", []):
                 if not path.is_file():
                     parser.error(f"workload input does not exist: {path}")
