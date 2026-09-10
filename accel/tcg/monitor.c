@@ -141,6 +141,42 @@ static void tlb_flush_counts(size_t *pfull, size_t *ppart, size_t *pelide)
     *pelide = elide;
 }
 
+static void dump_tlb_config(GString *buf)
+{
+    size_t fixed_entries = 0;
+    size_t current_min = SIZE_MAX;
+    size_t current_max = 0;
+    bool victim_enabled = true;
+    bool found = false;
+    CPUState *cpu;
+    int mmu_idx;
+
+    CPU_FOREACH(cpu) {
+        CPUTLBCommon *common = &cpu->neg.tlb.c;
+
+        found = true;
+        if (common->fixed_tlb_bits) {
+            fixed_entries = (size_t)1 << common->fixed_tlb_bits;
+        }
+        victim_enabled &= common->victim_tlb_enabled;
+        for (mmu_idx = 0; mmu_idx < NB_MMU_MODES; mmu_idx++) {
+            CPUTLBDescFast *fast = &cpu->neg.tlb.f[mmu_idx];
+            size_t entries = (fast->mask >> CPU_TLB_ENTRY_BITS) + 1;
+
+            current_min = MIN(current_min, entries);
+            current_max = MAX(current_max, entries);
+        }
+    }
+    if (!found) {
+        current_min = 0;
+    }
+    g_string_append_printf(buf,
+        "SoftMMU TLB config fixed_entries=%zu victim=%s "
+        "current_min=%zu current_max=%zu\n",
+        fixed_entries, victim_enabled ? "on" : "off",
+        current_min, current_max);
+}
+
 static void dump_lp_tlb(GString *buf)
 {
     static const char * const mode_name[] = { "off", "on", "probe" };
@@ -402,6 +438,7 @@ static void dump_exec_info(GString *buf)
     g_string_append_printf(buf, "TLB full flushes    %zu\n", flush_full);
     g_string_append_printf(buf, "TLB partial flushes %zu\n", flush_part);
     g_string_append_printf(buf, "TLB elided flushes  %zu\n", flush_elide);
+    dump_tlb_config(buf);
     dump_lp_tlb(buf);
     dump_ptw_cache(buf);
 #ifdef QEMU_TLB_PROFILE

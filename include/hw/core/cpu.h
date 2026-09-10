@@ -338,6 +338,10 @@ typedef struct CPUTLBCommon {
     size_t part_flush_count;
     size_t elide_flush_count;
 
+    /* Experimental hardware-like TLB configuration. */
+    uint8_t fixed_tlb_bits;
+    bool victim_tlb_enabled;
+
     /* Experimental large-page miss-path cache configuration and counters. */
     uint8_t lp_tlb_mode;
     bool lp_tlb_replay;

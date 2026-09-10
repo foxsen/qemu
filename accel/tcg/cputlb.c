@@ -29,6 +29,7 @@
 #include "exec/ram_addr.h"
 #include "tcg/tcg.h"
 #include "qemu/error-report.h"
+#include "qemu/cutils.h"
 #include "exec/log.h"
 #include "exec/helper-proto-common.h"
 #include "qemu/atomic.h"
@@ -163,8 +164,8 @@ static void tb_jmp_cache_clear_page(CPUState *cpu, vaddr page_addr)
  * high), since otherwise we are likely to have a significant amount of
  * conflict misses.
  */
-static void tlb_mmu_resize_locked(CPUTLBDesc *desc, CPUTLBDescFast *fast,
-                                  int64_t now)
+static void tlb_mmu_resize_locked(CPUTLBCommon *common, CPUTLBDesc *desc,
+                                  CPUTLBDescFast *fast, int64_t now)
 {
     size_t old_size = tlb_n_entries(fast);
     size_t rate;
@@ -172,6 +173,10 @@ static void tlb_mmu_resize_locked(CPUTLBDesc *desc, CPUTLBDescFast *fast,
     int64_t window_len_ms = 100;
     int64_t window_len_ns = window_len_ms * 1000 * 1000;
     bool window_expired = now > desc->window_begin_ns + window_len_ns;
+
+    if (common->fixed_tlb_bits) {
+        return;
+    }
 
     if (desc->n_used_entries > desc->window_max_entries) {
         desc->window_max_entries = desc->n_used_entries;
@@ -238,14 +243,17 @@ static void tlb_mmu_resize_locked(CPUTLBDesc *desc, CPUTLBDescFast *fast,
     }
 }
 
-static void tlb_mmu_flush_locked(CPUTLBDesc *desc, CPUTLBDescFast *fast)
+static void tlb_mmu_flush_locked(CPUTLBCommon *common, CPUTLBDesc *desc,
+                                 CPUTLBDescFast *fast)
 {
     desc->n_used_entries = 0;
     desc->large_page_addr = -1;
     desc->large_page_mask = -1;
     desc->vindex = 0;
     memset(fast->table, -1, sizeof_tlb(fast));
-    memset(desc->vtable, -1, sizeof(desc->vtable));
+    if (common->victim_tlb_enabled) {
+        memset(desc->vtable, -1, sizeof(desc->vtable));
+    }
 }
 
 /* Called with tlb_c.lock held, except during single-threaded initialization. */
@@ -290,13 +298,15 @@ static void tlb_flush_one_mmuidx_locked(CPUState *cpu, int mmu_idx,
     CPUTLBDescFast *fast = &cpu->neg.tlb.f[mmu_idx];
 
     tlb_lp_flush_locked(cpu, mmu_idx);
-    tlb_mmu_resize_locked(desc, fast, now);
-    tlb_mmu_flush_locked(desc, fast);
+    tlb_mmu_resize_locked(&cpu->neg.tlb.c, desc, fast, now);
+    tlb_mmu_flush_locked(&cpu->neg.tlb.c, desc, fast);
 }
 
-static void tlb_mmu_init(CPUTLBDesc *desc, CPUTLBDescFast *fast, int64_t now)
+static void tlb_mmu_init(CPUTLBCommon *common, CPUTLBDesc *desc,
+                         CPUTLBDescFast *fast, int64_t now)
 {
-    size_t n_entries = 1 << CPU_TLB_DYN_DEFAULT_BITS;
+    unsigned bits = common->fixed_tlb_bits ?: CPU_TLB_DYN_DEFAULT_BITS;
+    size_t n_entries = (size_t)1 << bits;
 
     tlb_window_reset(desc, now, 0);
     desc->n_used_entries = 0;
@@ -308,7 +318,7 @@ static void tlb_mmu_init(CPUTLBDesc *desc, CPUTLBDescFast *fast, int64_t now)
     desc->lp_tlb_generation = 0;
     memset(desc->lp_tlb_next, 0, sizeof(desc->lp_tlb_next));
     tlb_lp_flush_desc_locked(desc);
-    tlb_mmu_flush_locked(desc, fast);
+    tlb_mmu_flush_locked(common, desc, fast);
 }
 
 static inline void tlb_n_used_entries_inc(CPUState *cpu, uintptr_t mmu_idx)
@@ -325,6 +335,9 @@ void tlb_init(CPUState *cpu)
 {
     const char *lp_tlb_mode = g_getenv("QEMU_SOFTMMU_LP_CACHE");
     const char *ptw_cache_mode = g_getenv("QEMU_X86_PTW_CACHE");
+    const char *tlb_entries = g_getenv("QEMU_SOFTMMU_TLB_ENTRIES");
+    const char *victim_tlb = g_getenv("QEMU_SOFTMMU_VICTIM_TLB");
+    uint64_t entries;
     int64_t now = get_clock_realtime();
     int i;
 
@@ -333,6 +346,24 @@ void tlb_init(CPUState *cpu)
     /* All tlbs are initialized flushed. */
     cpu->neg.tlb.c.dirty = 0;
     cpu->neg.tlb.c.ptw_cache_generation = 1;
+    cpu->neg.tlb.c.victim_tlb_enabled = true;
+    if (tlb_entries) {
+        if (qemu_strtou64(tlb_entries, NULL, 10, &entries) < 0 ||
+            !is_power_of_2(entries) ||
+            entries < (1 << CPU_TLB_DYN_MIN_BITS) ||
+            entries > ((uint64_t)1 << CPU_TLB_DYN_MAX_BITS)) {
+            warn_report("invalid QEMU_SOFTMMU_TLB_ENTRIES value '%s'; "
+                        "using dynamic sizing", tlb_entries);
+        } else {
+            cpu->neg.tlb.c.fixed_tlb_bits = ctz64(entries);
+        }
+    }
+    if (victim_tlb && !strcmp(victim_tlb, "off")) {
+        cpu->neg.tlb.c.victim_tlb_enabled = false;
+    } else if (victim_tlb && strcmp(victim_tlb, "on")) {
+        warn_report("invalid QEMU_SOFTMMU_VICTIM_TLB value '%s'; using on",
+                    victim_tlb);
+    }
     if (!lp_tlb_mode || !strcmp(lp_tlb_mode, "off")) {
         cpu->neg.tlb.c.lp_tlb_mode = CPU_TLB_CACHE_OFF;
     } else if (!strcmp(lp_tlb_mode, "on")) {
@@ -357,7 +388,8 @@ void tlb_init(CPUState *cpu)
     }
 
     for (i = 0; i < NB_MMU_MODES; i++) {
-        tlb_mmu_init(&cpu->neg.tlb.d[i], &cpu->neg.tlb.f[i], now);
+        tlb_mmu_init(&cpu->neg.tlb.c, &cpu->neg.tlb.d[i],
+                     &cpu->neg.tlb.f[i], now);
     }
 }
 
@@ -535,6 +567,9 @@ static void tlb_flush_vtlb_page_mask_locked(CPUState *cpu, int mmu_idx,
     int k;
 
     assert_cpu_is_self(cpu);
+    if (!cpu->neg.tlb.c.victim_tlb_enabled) {
+        return;
+    }
     for (k = 0; k < CPU_VTLB_SIZE; k++) {
         if (tlb_flush_entry_mask_locked(&d->vtable[k], page, mask)) {
             tlb_n_used_entries_dec(cpu, mmu_idx);
@@ -1103,9 +1138,11 @@ void tlb_reset_dirty(CPUState *cpu, ram_addr_t start1, ram_addr_t length)
                                          start1, length);
         }
 
-        for (i = 0; i < CPU_VTLB_SIZE; i++) {
-            tlb_reset_dirty_range_locked(&cpu->neg.tlb.d[mmu_idx].vtable[i],
-                                         start1, length);
+        if (cpu->neg.tlb.c.victim_tlb_enabled) {
+            for (i = 0; i < CPU_VTLB_SIZE; i++) {
+                tlb_reset_dirty_range_locked(
+                    &cpu->neg.tlb.d[mmu_idx].vtable[i], start1, length);
+            }
         }
     }
     qemu_spin_unlock(&cpu->neg.tlb.c.lock);
@@ -1134,10 +1171,13 @@ void tlb_set_dirty(CPUState *cpu, vaddr addr)
         tlb_set_dirty1_locked(tlb_entry(cpu, mmu_idx, addr), addr);
     }
 
-    for (mmu_idx = 0; mmu_idx < NB_MMU_MODES; mmu_idx++) {
-        int k;
-        for (k = 0; k < CPU_VTLB_SIZE; k++) {
-            tlb_set_dirty1_locked(&cpu->neg.tlb.d[mmu_idx].vtable[k], addr);
+    if (cpu->neg.tlb.c.victim_tlb_enabled) {
+        for (mmu_idx = 0; mmu_idx < NB_MMU_MODES; mmu_idx++) {
+            int k;
+            for (k = 0; k < CPU_VTLB_SIZE; k++) {
+                tlb_set_dirty1_locked(
+                    &cpu->neg.tlb.d[mmu_idx].vtable[k], addr);
+            }
         }
     }
     qemu_spin_unlock(&cpu->neg.tlb.c.lock);
@@ -1374,12 +1414,14 @@ void tlb_set_page_full(CPUState *cpu, int mmu_idx,
      * different page; otherwise just overwrite the stale data.
      */
     if (!tlb_hit_page_anyprot(te, addr_page) && !tlb_entry_is_empty(te)) {
-        unsigned vidx = desc->vindex++ % CPU_VTLB_SIZE;
-        CPUTLBEntry *tv = &desc->vtable[vidx];
+        if (tlb->c.victim_tlb_enabled) {
+            unsigned vidx = desc->vindex++ % CPU_VTLB_SIZE;
+            CPUTLBEntry *tv = &desc->vtable[vidx];
 
-        /* Evict the old entry into the victim tlb.  */
-        copy_tlb_helper_locked(tv, te);
-        desc->vfulltlb[vidx] = desc->fulltlb[index];
+            /* Evict the old entry into the victim tlb.  */
+            copy_tlb_helper_locked(tv, te);
+            desc->vfulltlb[vidx] = desc->fulltlb[index];
+        }
         tlb_n_used_entries_dec(cpu, mmu_idx);
     }
 
@@ -1614,6 +1656,9 @@ static bool victim_tlb_hit(CPUState *cpu, size_t mmu_idx, size_t index,
 #ifdef QEMU_TLB_PROFILE
     qatomic_inc(&cpu->neg.tlb.c.l1_miss_count[access_type]);
 #endif
+    if (!cpu->neg.tlb.c.victim_tlb_enabled) {
+        return false;
+    }
     for (vidx = 0; vidx < CPU_VTLB_SIZE; ++vidx) {
         CPUTLBEntry *vtlb = &cpu->neg.tlb.d[mmu_idx].vtable[vidx];
         uint64_t cmp = tlb_read_idx(vtlb, access_type);
