@@ -1,0 +1,33 @@
+#!/bin/busybox sh
+
+/bin/busybox --install -s /bin
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+
+echo "TLB-STUDY kernel=$(uname -r) cmdline=$(cat /proc/cmdline)"
+echo madvise > /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null || true
+
+mode=seq
+mib=128
+passes=128
+page_mode=nohuge
+handshake=0
+for option in $(cat /proc/cmdline); do
+    case "$option" in
+        tlb_mode=*) mode=${option#tlb_mode=} ;;
+        tlb_mib=*) mib=${option#tlb_mib=} ;;
+        tlb_passes=*) passes=${option#tlb_passes=} ;;
+        tlb_page_mode=*) page_mode=${option#tlb_page_mode=} ;;
+        tlb_handshake=*) handshake=${option#tlb_handshake=} ;;
+    esac
+done
+
+if [ "$handshake" = 1 ]; then
+    /pagewalk-bench "$mode" "$mib" "$passes" "$page_mode" handshake
+else
+    /pagewalk-bench "$mode" "$mib" "$passes" "$page_mode"
+fi
+echo "TLB-STUDY-DONE"
+sync
+reboot -f

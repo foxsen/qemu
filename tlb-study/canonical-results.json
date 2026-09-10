@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "rows": [
+    {
+      "label": "sysbench",
+      "perf_result": "results/cloud-perf-sysbench-memory-rnd4k",
+      "counter_result": "results/sysbench-window-profile"
+    },
+    {
+      "label": "stress-ng",
+      "perf_result": "results/cloud-perf-stress-ng-tlb-shootdown",
+      "counter_result": "results/stress-window-profile-v3"
+    },
+    {
+      "label": "DaCapo",
+      "perf_result": "results/cloud-perf-dacapo-avrora",
+      "counter_result": "results/dacapo-window-profile"
+    },
+    {
+      "label": "nested-QEMU",
+      "perf_result": "results/cloud-perf-nested-kvm-random",
+      "counter_result": "results/nested-window-profile"
+    },
+    {
+      "label": "SPEC2006 429.mcf train",
+      "perf_result": "results/spec2006-429-mcf-train-perf-20260909-r01",
+      "counter_result": "results/spec2006-429-mcf-train-window-20260909-r01"
+    },
+    {
+      "label": "GAPBS PR scale20 x8",
+      "perf_result": "results/gapbs-pr-kron20-perf-t8-20260909-r01",
+      "counter_result": "results/gapbs-pr-kron20-window-t8-20260909-r01"
+    }
+  ]
+}

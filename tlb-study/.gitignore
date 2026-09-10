@@ -1,0 +1,14 @@
+images/*.qcow2
+images/*-linux
+images/*.iso
+images/*.img
+images/tlb-study-key*
+results/*
+!results/.gitkeep
+guest/pagewalk-bench
+build/
+__pycache__/
+initramfs/
+cloud/seed/
+workloads/*.jar
+workloads/*.tar.*

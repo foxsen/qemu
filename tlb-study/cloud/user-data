@@ -1,0 +1,27 @@
+#cloud-config
+hostname: tlb-guest
+manage_etc_hosts: true
+users:
+  - name: debian
+    groups: [adm, sudo]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJInF70C4hIM9+8oqxhzoR2uQQ7h0I4y64GL9jP29bXU qemu-tlb-study
+ssh_pwauth: false
+package_update: true
+packages:
+  - bc
+  - build-essential
+  - openjdk-17-jre-headless
+  - qemu-system-x86
+  - stress-ng
+  - sysbench
+  - xz-utils
+growpart:
+  mode: auto
+  devices: ['/']
+resize_rootfs: true
+runcmd:
+  - [sh, -c, 'touch /var/lib/tlb-study-cloud-ready']
