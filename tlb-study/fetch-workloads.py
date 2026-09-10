@@ -29,6 +29,13 @@ WORKLOADS = {
                "b5e3e19c2845f22fb338f4a4bc4b1ccee861d026.tar.gz",
         "sha256": "b494c44636b0cbcb683d14a7d2f447f12442b5a6eb9cb1c527a1ea8c8cd7762e",
     },
+    "graphbig": {
+        "name": "graphbig-v3.2-fc1ef159.tar.gz",
+        "url": "https://github.com/graphbig/graphBIG/archive/"
+               "fc1ef159238dadb1e1f3f87584cf913ddab386cc.tar.gz",
+        "sha256": "d9a1f5b96e242c3fe6ef6d764d775eae117df1476c5386f200"
+                  "da35e514ea3bdf",
+    },
 }
 
 

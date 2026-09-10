@@ -682,7 +682,11 @@ nostats-v1-{base,lp,ptw,both}-r0[1-3]
 - [x] 将 #54 workload 与第 7 节候选矩阵对齐；
 - [x] 在统一无 cache 原子统计 binary 上重跑 baseline/LP/PTW/LP+PTW；
 - [ ] 在隔离核、performance governor 和禁用休眠条件下至少重复 10 次；
-- [ ] 增加 `471.omnetpp`、`483.xalancbmk`、更多 GAPBS 算法及大规模输入；
+- [ ] 完成已接入的 `471.omnetpp`、`483.xalancbmk` 四配置测量，并增加更多
+  GAPBS 算法及大规模输入；
+- [ ] GraphBIG v3.2 的 PR/GC/SSSP/TC/BFS/CC/BC runner 与小图正确性门槛已
+  准备；正式结果仍需确定并记录可复现的大图来源，不能用相同字节数替代 #54
+  未披露的 8 GB 图；
 - [ ] 增加至少一类长稳态 server/KV workload 和一类多 vCPU workload；
 - [ ] 对 Linux kernel build 补齐 baseline/LP/PTW 对比，或解释为何排除；
 - [ ] 补齐 read/write/execute、unmap/remap、MMIO、dirty/watchpoint 和多核 shootdown

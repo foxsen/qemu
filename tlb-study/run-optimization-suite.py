@@ -38,14 +38,26 @@ def workload_args(here, name):
                         "-jar ~/tlb-workloads/dacapo-9.12-bach.jar "
                         "avrora -n 1"),
         }
-    if name == "mcf":
+    spec_commands = {
+        "mcf": ("429.mcf", "./mcf inp.in > inp.out 2> inp.err"),
+        "omnetpp": (
+            "471.omnetpp",
+            "./omnetpp omnetpp.ini > omnetpp.log 2> omnetpp.err",
+        ),
+        "xalancbmk": (
+            "483.xalancbmk",
+            "./Xalan -v allbooks.xml xalanc.xsl > train.out 2> train.err",
+        ),
+    }
+    if name in spec_commands:
         archive = workloads / "spec2006-train-x86_64.tar.xz"
+        directory, command = spec_commands[name]
         return {
             "copy": [archive],
             "prepare": ("cd ~/tlb-workloads && "
                         "tar -xJf spec2006-train-x86_64.tar.xz"),
-            "command": ("cd ~/tlb-workloads/spec2006-train/429.mcf && "
-                        "./mcf inp.in > inp.out 2> inp.err"),
+            "command": (f"cd ~/tlb-workloads/spec2006-train/{directory} && "
+                        f"{command}"),
         }
     if name == "gapbs":
         archive = workloads / "gapbs-v1.5-b5e3e19c.tar.gz"
@@ -81,7 +93,8 @@ def workload_args(here, name):
 
 def main():
     here = Path(__file__).resolve().parent
-    choices = ("sysbench", "stress-tlb", "dacapo", "mcf", "gapbs", "nested")
+    defaults = ("sysbench", "stress-tlb", "dacapo", "mcf", "gapbs", "nested")
+    choices = (*defaults, "omnetpp", "xalancbmk")
     parser = argparse.ArgumentParser()
     parser.add_argument("--workload", action="append", choices=choices)
     parser.add_argument("--variant", action="append", choices=VARIANTS)
@@ -119,7 +132,7 @@ def main():
     qemu = args.qemu.resolve()
     if not qemu.is_file():
         parser.error(f"QEMU binary does not exist: {qemu}")
-    requested_workloads = args.workload or list(choices)
+    requested_workloads = args.workload or list(defaults)
     variants = args.variant or list(VARIANTS)
     for rep in range(1, args.repetitions + 1):
         jobs = [(workload, variant)

@@ -39,6 +39,7 @@ def main():
         default=here / "workloads/spec2006-train-x86_64.tar.xz",
     )
     parser.add_argument("--cpu", default="2")
+    parser.add_argument("--nice", type=int, default=0)
     parser.add_argument("--perf-frequency", type=int, default=99)
     parser.add_argument(
         "--large-page-cache", choices=("off", "on", "probe"), default="off",
@@ -49,6 +50,10 @@ def main():
     parser.add_argument(
         "--guest-thp", choices=("leave", "always", "madvise", "never"),
         default="leave",
+    )
+    parser.add_argument("--tlb-entries", type=int, default=0)
+    parser.add_argument(
+        "--victim-tlb", choices=("on", "off"), default="on",
     )
     parser.add_argument(
         "--name-suffix", default="",
@@ -63,6 +68,10 @@ def main():
         parser.error(
             "--name-suffix must contain only letters, digits, '.', '_' and '-'"
         )
+    if args.tlb_entries < 0 or (
+            args.tlb_entries and
+            args.tlb_entries & (args.tlb_entries - 1)):
+        parser.error("--tlb-entries must be zero or a power of two")
 
     archive = args.archive.resolve()
     if not archive.is_file():
@@ -83,7 +92,7 @@ def main():
             sys.executable, str(here / "run-cloud-profile.py"),
             "--qemu", str(qemu),
             "--name", f"spec2006-{slug}-train-{args.mode}{suffix}",
-            "--cpu", args.cpu,
+            "--cpu", args.cpu, "--nice", str(args.nice),
             "--copy-to-workloads", str(archive),
             "--prepare-command",
             ("cd ~/tlb-workloads && "
@@ -94,6 +103,8 @@ def main():
             "--large-page-cache", args.large_page_cache,
             "--ptw-cache", args.ptw_cache,
             "--guest-thp", args.guest_thp,
+            "--tlb-entries", str(args.tlb_entries),
+            "--victim-tlb", args.victim_tlb,
         ]
         if args.snapshot:
             command.append("--snapshot")

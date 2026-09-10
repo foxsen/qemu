@@ -253,6 +253,12 @@ plugin-window modes; for example:
 ./tlb-study/run-spec2006.py --mode window --benchmark 429.mcf
 ```
 
+For the fixed-table/no-victim ablation, the same wrapper also accepts
+`--tlb-entries 4096 --victim-tlb off --cpu 7 --nice -20`.  The optimization
+matrix names the additional workloads `omnetpp` and `xalancbmk`; omitting
+`--workload` deliberately retains the original default set so that adding the
+two licensed inputs cannot silently enlarge an existing experiment.
+
 These are workload characterizations, not reportable SPEC scores: the wrapper
 does not invoke the official result-validation and reporting machinery. The
 cloud harness refuses to overwrite a non-empty result directory; use a suffix
@@ -306,6 +312,44 @@ input build requires roughly 275 GB of disk and 64 GB of RAM, beyond this
 host's resources. The pinned archive SHA-256 is
 `b494c44636b0cbcb683d14a7d2f447f12442b5a6eb9cb1c527a1ea8c8cd7762e`.
 
+## GraphBIG
+
+`fetch-workloads.py graphbig` downloads the official GraphBIG v3.2 tag
+(`fc1ef159238dadb1e1f3f87584cf913ddab386cc`) and verifies the pinned source
+archive digest.  `run-graphbig.py` covers the seven CPU workloads used by HPCA
+2027 submission #54: PageRank (`pr`), graph coloring (`gc`), shortest path
+(`sssp`), triangle counting (`tc`), breadth-first search (`bfs`), connected
+components (`cc`), and betweenness centrality (`bc`).  A bundled-small smoke
+run invokes GraphBIG's reference-output comparison before rebuilding the normal
+optimized binary:
+
+```sh
+./tlb-study/fetch-workloads.py graphbig
+./tlb-study/run-graphbig.py --mode perf --kernel bfs --name-suffix smoke
+./tlb-study/run-graphbig.py --mode profile --kernel pr
+./tlb-study/run-graphbig.py --mode window --kernel pr
+```
+
+The bundled 1,000-vertex graph is a correctness gate, not a performance
+dataset.  For a larger graph, pass a tar archive containing `vertex.csv` and
+`edge.csv` at its root (or select their directory with `--dataset-subdir`), and
+give it an explicit provenance label:
+
+```sh
+./tlb-study/run-graphbig.py --mode perf --kernel pr \
+  --dataset-archive /path/to/graphbig-8gb.tar.xz \
+  --dataset-tag synthetic-8gb --memory 20G
+```
+
+Dataset extraction and compilation occur before the measurement barrier;
+loading the graph and running the selected algorithm are measured.  The 8 GB
+entry in #54 does not identify a public graph or generation recipe, so matching
+only its byte count would not reproduce that experiment.  This host has 30 GiB
+of RAM; validate a moderate dataset first because GraphBIG's in-memory property
+graph can require substantially more memory than its CSV input.  Record the
+dataset source, hashes, vertex/edge counts, directedness, and archive layout
+before promoting such a run.
+
 ## Experimental Large-Page and PTW Caches
 
 The current prototype provides two opt-in miss-path experiments. Set
@@ -320,7 +364,8 @@ guest THP forced to `always`:
 
 ```sh
 ./tlb-study/run-optimization-suite.py \
-  --workload mcf --workload gapbs --workload nested \
+  --workload mcf --workload omnetpp --workload xalancbmk \
+  --workload gapbs --workload nested \
   --variant base --variant lp --variant ptw --repetitions 3
 ./tlb-study/summarize-optimizations.py \
   tlb-study/results/opt-{mcf,gapbs,nested}-{base,lp,ptw}-r0[1-3]
