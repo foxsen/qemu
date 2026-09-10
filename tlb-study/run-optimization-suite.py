@@ -3,6 +3,7 @@
 
 import argparse
 from pathlib import Path
+import random
 import re
 import shlex
 import subprocess
@@ -95,6 +96,8 @@ def main():
     parser.add_argument("--perf-event", default="cpu_core/cycles/u")
     parser.add_argument("--perfmap", action=argparse.BooleanOptionalAction,
                         default=True)
+    parser.add_argument("--shuffle-seed", type=int,
+                        help="shuffle workload/variant order per repetition")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--resume", action="store_true",
                         help="skip result directories that already contain result.json")
@@ -115,43 +118,47 @@ def main():
     requested_workloads = args.workload or list(choices)
     variants = args.variant or list(VARIANTS)
     for rep in range(1, args.repetitions + 1):
-        for workload in requested_workloads:
+        jobs = [(workload, variant)
+                for workload in requested_workloads
+                for variant in variants]
+        if args.shuffle_seed is not None:
+            random.Random(args.shuffle_seed + rep).shuffle(jobs)
+        for workload, variant in jobs:
             config = workload_args(here, workload)
-            for variant in variants:
-                lp_mode, ptw_mode = VARIANTS[variant]
-                tag = f"-{args.name_tag}" if args.name_tag else ""
-                name = f"opt-{workload}{tag}-{variant}-r{rep:02d}"
-                result = here / "results" / name / "result.json"
-                if args.resume and result.is_file():
-                    print(f"skip {name}", flush=True)
-                    continue
-                command = [
-                    sys.executable, str(here / "run-cloud-profile.py"),
-                    "--qemu", str(qemu), "--name", name,
-                    "--cpu", args.cpu, "--nice", str(args.nice),
-                    "--snapshot", "--guest-thp", "always",
-                    "--large-page-cache", lp_mode, "--ptw-cache", ptw_mode,
-                    "--tlb-entries", str(args.tlb_entries),
-                    "--victim-tlb", args.victim_tlb,
-                    "--memory", config.get("memory", "1G"),
-                    "--prepare-command", config.get("prepare", "true"),
-                    "--command", config["command"],
-                ]
-                if args.perf:
-                    command.extend([
-                        "--perf", "--perf-frequency",
-                        str(args.perf_frequency), "--perf-event",
-                        args.perf_event,
-                    ])
-                    if not args.perfmap:
-                        command.append("--no-perfmap")
-                for path in config.get("copy", []):
-                    if not path.is_file():
-                        parser.error(f"workload input does not exist: {path}")
-                    command.extend(["--copy-to-workloads", str(path.resolve())])
-                print(shlex.join(command), flush=True)
-                if not args.dry_run:
-                    subprocess.run(command, check=True)
+            lp_mode, ptw_mode = VARIANTS[variant]
+            tag = f"-{args.name_tag}" if args.name_tag else ""
+            name = f"opt-{workload}{tag}-{variant}-r{rep:02d}"
+            result = here / "results" / name / "result.json"
+            if args.resume and result.is_file():
+                print(f"skip {name}", flush=True)
+                continue
+            command = [
+                sys.executable, str(here / "run-cloud-profile.py"),
+                "--qemu", str(qemu), "--name", name,
+                "--cpu", args.cpu, "--nice", str(args.nice),
+                "--snapshot", "--guest-thp", "always",
+                "--large-page-cache", lp_mode, "--ptw-cache", ptw_mode,
+                "--tlb-entries", str(args.tlb_entries),
+                "--victim-tlb", args.victim_tlb,
+                "--memory", config.get("memory", "1G"),
+                "--prepare-command", config.get("prepare", "true"),
+                "--command", config["command"],
+            ]
+            if args.perf:
+                command.extend([
+                    "--perf", "--perf-frequency",
+                    str(args.perf_frequency), "--perf-event",
+                    args.perf_event,
+                ])
+                if not args.perfmap:
+                    command.append("--no-perfmap")
+            for path in config.get("copy", []):
+                if not path.is_file():
+                    parser.error(f"workload input does not exist: {path}")
+                command.extend(["--copy-to-workloads", str(path.resolve())])
+            print(shlex.join(command), flush=True)
+            if not args.dry_run:
+                subprocess.run(command, check=True)
 
 
 if __name__ == "__main__":
