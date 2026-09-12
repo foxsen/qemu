@@ -36,14 +36,29 @@ def clean_inline(text):
     text = (text.replace("`", "").replace("**", "").replace("*", "")
             .replace("$", ""))
     text = text.replace("--", "—")
+    text = re.sub(r"(?<=[\u3400-\u9fff]) +", "", text)
+    text = re.sub(r" +(?=[\u3400-\u9fff，。；：、）])", "", text)
+    text = re.sub(r" {2,}", " ", text)
     return text.strip()
+
+
+def join_wrapped_lines(lines):
+    """Join Markdown hard wraps without inserting spaces into Chinese text."""
+    text = lines[0]
+    chinese = re.compile(r"[\u3400-\u9fff，。；：、（）《》]")
+    for line in lines[1:]:
+        separator = ""
+        if text and line and not chinese.match(text[-1]) and not chinese.match(
+                line[0]):
+            separator = " "
+        text += separator + line
+    return text
 
 
 def equation_text(lines):
     text = " ".join(line.strip() for line in lines)
     replacements = {
-        r"N_{refill}=N_{L1\ miss}-N_{victim\ hit}.":
-            "N_refill = N_L1 miss − N_victim hit",
+        r"N_f=N_p-N_v.": "N_f = N_p − N_v",
         r"p=p_b+(v-v_b),\quad 0\leq v-v_b<2^S. \tag{1}":
             "p = p_b + (v − v_b),   0 ≤ v − v_b < 2^S    (1)",
         r"S_{total}=\frac{1}{(1-f)+f/s}. \tag{2}":
@@ -52,11 +67,13 @@ def equation_text(lines):
     return replacements.get(text, text.replace("\\quad", "   "))
 
 
-def set_cell_text(cell, text, header=False):
+def set_cell_text(cell, text, header=False, keep_with_next=False):
     cell.text = clean_inline(text)
     for paragraph in cell.paragraphs:
         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
         paragraph.paragraph_format.space_after = Pt(0)
+        paragraph.paragraph_format.keep_together = True
+        paragraph.paragraph_format.keep_with_next = keep_with_next
         for run in paragraph.runs:
             set_run_font(run, size=9)
             run.bold = header
@@ -72,7 +89,8 @@ def add_table(document, lines):
     for row_index, row in enumerate(rows):
         for column_index, value in enumerate(row):
             set_cell_text(table.cell(row_index, column_index), value,
-                          header=row_index == 0)
+                          header=row_index == 0,
+                          keep_with_next=row_index < len(rows) - 1)
     document.add_paragraph().paragraph_format.space_after = Pt(0)
 
 
@@ -166,6 +184,8 @@ def export(source, output):
         if line.startswith("**图") or line.startswith("**表"):
             paragraph = document.add_paragraph(style="Caption")
             paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            if line.startswith("**表"):
+                paragraph.paragraph_format.keep_with_next = True
             paragraph.add_run(clean_inline(line))
             index += 1
             continue
@@ -201,14 +221,14 @@ def export(source, output):
                 break
             paragraph_lines.append(candidate)
             index += 1
-        paragraph = add_body_paragraph(document, " ".join(paragraph_lines),
+        paragraph = add_body_paragraph(document, join_wrapped_lines(paragraph_lines),
                                        section_name)
         if paragraph.text.startswith("关键词：") or paragraph.text.startswith(
                 "Keywords:"):
             paragraph.paragraph_format.first_line_indent = Pt(0)
             paragraph.runs[0].bold = True
 
-    document.core_properties.title = "全系统模拟器访存慢路径自适应优化"
+    document.core_properties.title = "全系统模拟器MMU不命中路径自适应优化"
     document.core_properties.subject = "高技术通讯投稿论文草稿"
     output.parent.mkdir(parents=True, exist_ok=True)
     document.save(output)
