@@ -1,0 +1,59 @@
+digraph softmmu_path {
+    graph [
+        rankdir=TB,
+        bgcolor="white",
+        fontname="Noto Sans CJK SC",
+        fontsize=12,
+        nodesep=0.55,
+        ranksep=0.65,
+        pad=0.15
+    ];
+    node [
+        shape=box,
+        style="rounded,filled",
+        fillcolor="#f7f9fc",
+        color="#415a77",
+        fontname="Noto Sans CJK SC",
+        fontsize=12,
+        margin="0.12,0.07"
+    ];
+    edge [
+        color="#415a77",
+        fontname="Noto Sans CJK SC",
+        fontsize=10,
+        arrowsize=0.7
+    ];
+
+    access [label="客户机访存"];
+    l1 [label="生成代码内联\nSoftTLB 查询", fillcolor="#e8f1fb"];
+    host [label="宿主内存或 MMIO\n访问", fillcolor="#e8f6ee"];
+    victim [label="victim TLB 查询"];
+    gate [label="在线收益率门控\n（本文）", fillcolor="#fff1d6",
+        color="#c47f00"];
+    lp [label="大页转换缓存查询\n（本文）", fillcolor="#fff1d6",
+        color="#c47f00"];
+    fill [label="目标架构 TLB fill"];
+    ptw [label="页表遍历、非叶 PTW cache\n及独立门控（本文）", fillcolor="#fff1d6",
+        color="#c47f00"];
+    region [label="MemoryRegion 解析"];
+    install [label="tlb_set_page_full()\n安装 4 KiB 项"];
+
+    { rank=same; access; l1; host; }
+    { rank=same; victim; gate; lp; fill; }
+    { rank=same; install; region; ptw; }
+
+    access -> l1;
+    l1 -> host [label="命中"];
+    l1 -> victim [label="未命中"];
+    victim -> host [label="命中"];
+    victim -> gate [label="未命中"];
+    gate -> lp [label="采样/启用"];
+    gate -> fill [label="旁路"];
+    lp -> install [label="命中", color="#c47f00", fontcolor="#9a6500",
+        penwidth=1.2];
+    lp -> fill [label="未命中"];
+    fill -> ptw;
+    ptw -> region;
+    region -> install;
+    install -> l1 [label="重试", constraint=false];
+}
