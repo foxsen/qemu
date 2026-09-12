@@ -255,11 +255,13 @@ def main():
     parser.add_argument("--plugin-window", action="store_true",
                         help="count guest memory operations inside the barrier")
     parser.add_argument(
-        "--large-page-cache", choices=("off", "on", "probe"), default="off",
+        "--large-page-cache",
+        choices=("off", "on", "probe", "adaptive"), default="off",
         help="experimental victim-miss large-page cache mode",
     )
     parser.add_argument(
-        "--ptw-cache", choices=("off", "on", "probe"), default="off",
+        "--ptw-cache", choices=("off", "on", "probe", "adaptive"),
+        default="off",
         help="experimental x86 L2--L4 non-leaf page-table cache mode",
     )
     parser.add_argument(

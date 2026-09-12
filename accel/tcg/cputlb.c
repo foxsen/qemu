@@ -374,6 +374,8 @@ void tlb_init(CPUState *cpu)
         cpu->neg.tlb.c.lp_tlb_mode = CPU_TLB_CACHE_ON;
     } else if (!strcmp(lp_tlb_mode, "probe")) {
         cpu->neg.tlb.c.lp_tlb_mode = CPU_TLB_CACHE_PROBE;
+    } else if (!strcmp(lp_tlb_mode, "adaptive")) {
+        cpu->neg.tlb.c.lp_tlb_mode = CPU_TLB_CACHE_ADAPTIVE;
     } else {
         warn_report("invalid QEMU_SOFTMMU_LP_CACHE value '%s'; using off",
                     lp_tlb_mode);
@@ -385,10 +387,18 @@ void tlb_init(CPUState *cpu)
         cpu->neg.tlb.c.ptw_cache_mode = CPU_TLB_CACHE_ON;
     } else if (!strcmp(ptw_cache_mode, "probe")) {
         cpu->neg.tlb.c.ptw_cache_mode = CPU_TLB_CACHE_PROBE;
+    } else if (!strcmp(ptw_cache_mode, "adaptive")) {
+        cpu->neg.tlb.c.ptw_cache_mode = CPU_TLB_CACHE_ADAPTIVE;
     } else {
         warn_report("invalid QEMU_X86_PTW_CACHE value '%s'; using off",
                     ptw_cache_mode);
         cpu->neg.tlb.c.ptw_cache_mode = CPU_TLB_CACHE_OFF;
+    }
+    if (cpu->neg.tlb.c.lp_tlb_mode == CPU_TLB_CACHE_ADAPTIVE) {
+        cpu_tlb_cache_adaptive_init(&cpu->neg.tlb.c.lp_tlb_adaptive);
+    }
+    if (cpu->neg.tlb.c.ptw_cache_mode == CPU_TLB_CACHE_ADAPTIVE) {
+        cpu_tlb_cache_adaptive_init(&cpu->neg.tlb.c.ptw_cache_adaptive);
     }
 
     for (i = 0; i < NB_MMU_MODES; i++) {
@@ -1252,6 +1262,8 @@ static void tlb_lp_insert(CPUState *cpu, int mmu_idx, vaddr addr,
     unsigned set, way;
 
     if (common->lp_tlb_mode == CPU_TLB_CACHE_OFF || common->lp_tlb_replay ||
+        (common->lp_tlb_mode == CPU_TLB_CACHE_ADAPTIVE &&
+         common->lp_tlb_adaptive.phase == CPU_TLB_ADAPTIVE_BYPASS) ||
         page_bits <= TARGET_PAGE_BITS || page_bits >= 64) {
         return;
     }
@@ -1506,6 +1518,10 @@ static bool tlb_lp_hit(CPUState *cpu, int mmu_idx, vaddr addr,
     if (common->lp_tlb_mode == CPU_TLB_CACHE_OFF) {
         return false;
     }
+    if (common->lp_tlb_mode == CPU_TLB_CACHE_ADAPTIVE &&
+        !cpu_tlb_cache_adaptive_begin(&common->lp_tlb_adaptive)) {
+        return false;
+    }
 #ifdef QEMU_TLB_PROFILE
     qatomic_inc(&common->lp_tlb_lookup_count);
 #endif
@@ -1537,6 +1553,12 @@ static bool tlb_lp_hit(CPUState *cpu, int mmu_idx, vaddr addr,
                 return false;
             }
 
+            if (common->lp_tlb_mode == CPU_TLB_CACHE_ADAPTIVE) {
+                /* Treat at least one hit per 32 lookups as useful. */
+                cpu_tlb_cache_adaptive_complete(
+                    &common->lp_tlb_adaptive, 1, 5);
+            }
+
             full = entry->full;
             full.phys_addr = entry->paddr_base | (addr & page_mask);
             common->lp_tlb_replay = true;
@@ -1548,6 +1570,9 @@ static bool tlb_lp_hit(CPUState *cpu, int mmu_idx, vaddr addr,
 #endif
             return true;
         }
+    }
+    if (common->lp_tlb_mode == CPU_TLB_CACHE_ADAPTIVE) {
+        cpu_tlb_cache_adaptive_complete(&common->lp_tlb_adaptive, 0, 5);
     }
     return false;
 }

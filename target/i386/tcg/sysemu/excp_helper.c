@@ -200,6 +200,10 @@ static unsigned ptw_cache_lookup(CPUX86State *env, const TranslateParams *in,
     if (common->ptw_cache_mode == CPU_TLB_CACHE_OFF) {
         return 0;
     }
+    if (common->ptw_cache_mode == CPU_TLB_CACHE_ADAPTIVE &&
+        !cpu_tlb_cache_adaptive_begin(&common->ptw_cache_adaptive)) {
+        return 0;
+    }
     for (level = 2; level <= 4; level++) {
         unsigned set = ptw_cache_hash(in, level);
         unsigned way;
@@ -219,6 +223,11 @@ static unsigned ptw_cache_lookup(CPUX86State *env, const TranslateParams *in,
             if (common->ptw_cache_mode == CPU_TLB_CACHE_PROBE) {
                 return 0;
             }
+            if (common->ptw_cache_mode == CPU_TLB_CACHE_ADAPTIVE) {
+                /* A level-N hit avoids 5 - N non-leaf walk levels. */
+                cpu_tlb_cache_adaptive_complete(
+                    &common->ptw_cache_adaptive, 5 - level, 3);
+            }
             *next_table = entry->next_table;
             *ptep = entry->ptep;
 #ifdef QEMU_TLB_PROFILE
@@ -226,6 +235,11 @@ static unsigned ptw_cache_lookup(CPUX86State *env, const TranslateParams *in,
 #endif
             return level;
         }
+    }
+    if (common->ptw_cache_mode == CPU_TLB_CACHE_ADAPTIVE) {
+        /* Require one avoided walk level per eight lookups. */
+        cpu_tlb_cache_adaptive_complete(
+            &common->ptw_cache_adaptive, 0, 3);
     }
     return 0;
 }
@@ -238,7 +252,9 @@ static void ptw_cache_insert(CPUX86State *env, const TranslateParams *in,
     X86PTWCacheEntry *entry = NULL;
     unsigned set, way;
 
-    if (common->ptw_cache_mode == CPU_TLB_CACHE_OFF) {
+    if (common->ptw_cache_mode == CPU_TLB_CACHE_OFF ||
+        (common->ptw_cache_mode == CPU_TLB_CACHE_ADAPTIVE &&
+         common->ptw_cache_adaptive.phase == CPU_TLB_ADAPTIVE_BYPASS)) {
         return;
     }
     set = ptw_cache_hash(in, level);

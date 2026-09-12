@@ -134,7 +134,7 @@ def parse_tlb(text):
             for bits, count in re.findall(r"(\d+):(\d+)", match.group(1))
         }
     match = re.search(
-        r"Large-page cache mode=(off|on|probe) lookup=(\d+) "
+        r"Large-page cache mode=(off|on|probe|adaptive) lookup=(\d+) "
         r"match=(\d+) hit=(\d+) insert=(\d+) eviction=(\d+) "
         r"flush=(\d+)", text
     )
@@ -148,13 +148,41 @@ def parse_tlb(text):
             "eviction": int(match.group(6)),
             "flush": int(match.group(7)),
         }
-    match = re.search(r"PTW cache mode=(off|on|probe) flush=(\d+)", text)
+        adaptive = re.search(
+            r"Large-page adaptive sample_windows=(\d+) "
+            r"active_windows=(\d+) bypass_windows=(\d+) "
+            r"bypassed_lookups=(\d+) bypass_cpus=(\d+)", text
+        )
+        if adaptive:
+            result["large_page_cache"]["adaptive"] = {
+                "sample_windows": int(adaptive.group(1)),
+                "active_windows": int(adaptive.group(2)),
+                "bypass_windows": int(adaptive.group(3)),
+                "bypassed_lookups": int(adaptive.group(4)),
+                "bypass_cpus": int(adaptive.group(5)),
+            }
+    match = re.search(
+        r"PTW cache mode=(off|on|probe|adaptive) flush=(\d+)", text
+    )
     if match:
         result["ptw_cache"] = {
             "mode": match.group(1),
             "flush": int(match.group(2)),
             "levels": {},
         }
+        adaptive = re.search(
+            r"PTW adaptive sample_windows=(\d+) active_windows=(\d+) "
+            r"bypass_windows=(\d+) bypassed_lookups=(\d+) "
+            r"bypass_cpus=(\d+)", text
+        )
+        if adaptive:
+            result["ptw_cache"]["adaptive"] = {
+                "sample_windows": int(adaptive.group(1)),
+                "active_windows": int(adaptive.group(2)),
+                "bypass_windows": int(adaptive.group(3)),
+                "bypassed_lookups": int(adaptive.group(4)),
+                "bypass_cpus": int(adaptive.group(5)),
+            }
         for level, lookup, matched, hit, insert, eviction in re.findall(
             r"PTW cache level=([234]) lookup=(\d+) match=(\d+) "
             r"hit=(\d+) insert=(\d+) eviction=(\d+)", text
@@ -172,7 +200,7 @@ def parse_tlb(text):
 def subtract(after, before):
     if isinstance(after, dict):
         before = before if isinstance(before, dict) else {}
-        return {key: (value if key == "tlb_config" else
+        return {key: (value if key in {"tlb_config", "bypass_cpus"} else
                       subtract(value, before.get(key, 0)))
                 for key, value in after.items()}
     if isinstance(after, (int, float)):
@@ -285,11 +313,13 @@ def main():
                         help="also build the redundant flat perf report")
     parser.add_argument("--plugin-mem", action="store_true")
     parser.add_argument(
-        "--large-page-cache", choices=("off", "on", "probe"), default="off",
+        "--large-page-cache",
+        choices=("off", "on", "probe", "adaptive"), default="off",
         help="experimental victim-miss large-page cache mode",
     )
     parser.add_argument(
-        "--ptw-cache", choices=("off", "on", "probe"), default="off",
+        "--ptw-cache", choices=("off", "on", "probe", "adaptive"),
+        default="off",
         help="experimental x86 L2--L4 non-leaf page-table cache mode",
     )
     parser.add_argument(

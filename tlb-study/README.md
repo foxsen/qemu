@@ -356,8 +356,16 @@ The current prototype provides two opt-in miss-path experiments. Set
 `QEMU_SOFTMMU_LP_CACHE=on` to consult a small large-page translation cache only
 after the main and victim TLBs miss. Set `QEMU_X86_PTW_CACHE=on` to cache x86
 L2--L4 non-leaf walk results. Each variable also accepts `off` (the default)
-and `probe`, which records potential matches without serving them. The runners
-expose the same settings as `--large-page-cache` and `--ptw-cache`.
+and `probe`, which records potential matches without serving them.  The
+`adaptive` mode samples 2,048 miss-path lookups, keeps a productive cache active
+for 16,384 lookups, and bypasses an unproductive cache for 16,384 lookups before
+sampling again.  LP productivity requires at least one hit per 32 lookups; PTW
+productivity is weighted by the number of upper walk levels skipped and
+requires one skipped level per eight lookups.  The controller and cache are
+both downstream of the normal SoftTLB and victim-TLB lookup.  The runners
+expose these settings as `--large-page-cache` and `--ptw-cache`, and the
+optimization suite provides `lp-adaptive`, `ptw-adaptive`, and `both-adaptive`
+variants.
 
 Run repeated non-kernel comparisons with a fixed host CPU, snapshot guest, and
 guest THP forced to `always`:

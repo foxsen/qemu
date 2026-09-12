@@ -40,10 +40,12 @@ def main():
     )
     parser.add_argument("--name-suffix", default="")
     parser.add_argument(
-        "--large-page-cache", choices=("off", "on", "probe"), default="off",
+        "--large-page-cache",
+        choices=("off", "on", "probe", "adaptive"), default="off",
     )
     parser.add_argument(
-        "--ptw-cache", choices=("off", "on", "probe"), default="off",
+        "--ptw-cache", choices=("off", "on", "probe", "adaptive"),
+        default="off",
     )
     parser.add_argument(
         "--guest-thp", choices=("leave", "always", "madvise", "never"),

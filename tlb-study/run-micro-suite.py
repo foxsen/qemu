@@ -25,10 +25,12 @@ def main():
     parser.add_argument("--repetitions", type=int, default=5)
     parser.add_argument("--workloads", default=",".join(MATRIX))
     parser.add_argument(
-        "--large-page-cache", choices=("off", "on", "probe"), default="off",
+        "--large-page-cache",
+        choices=("off", "on", "probe", "adaptive"), default="off",
     )
     parser.add_argument(
-        "--ptw-cache", choices=("off", "on", "probe"), default="off",
+        "--ptw-cache", choices=("off", "on", "probe", "adaptive"),
+        default="off",
     )
     parser.add_argument("--tlb-entries", type=int, default=0)
     parser.add_argument("--victim-tlb", choices=("on", "off"), default="on")

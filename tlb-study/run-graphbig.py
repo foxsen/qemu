@@ -137,10 +137,12 @@ def main():
     parser.add_argument("--nice", type=int, default=0)
     parser.add_argument("--perf-frequency", type=int, default=99)
     parser.add_argument(
-        "--large-page-cache", choices=("off", "on", "probe"), default="off",
+        "--large-page-cache",
+        choices=("off", "on", "probe", "adaptive"), default="off",
     )
     parser.add_argument(
-        "--ptw-cache", choices=("off", "on", "probe"), default="off",
+        "--ptw-cache", choices=("off", "on", "probe", "adaptive"),
+        default="off",
     )
     parser.add_argument("--tlb-entries", type=int, default=0)
     parser.add_argument(

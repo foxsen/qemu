@@ -8,7 +8,10 @@ import re
 import statistics
 
 
-NAME = re.compile(r"^opt-(.+)-(base|lp|ptw|both)-r\d+$")
+NAME = re.compile(
+    r"^opt-(.+)-(base|lp|ptw|both|lp-adaptive|ptw-adaptive|"
+    r"both-adaptive)-r\d+$"
+)
 
 
 def ratio(numerator, denominator):

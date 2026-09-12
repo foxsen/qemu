@@ -179,9 +179,13 @@ static void dump_tlb_config(GString *buf)
 
 static void dump_lp_tlb(GString *buf)
 {
-    static const char * const mode_name[] = { "off", "on", "probe" };
+    static const char * const mode_name[] = {
+        "off", "on", "probe", "adaptive",
+    };
     size_t lookup = 0, match = 0, hit = 0, insert = 0;
     size_t evict = 0, flush = 0;
+    size_t sample = 0, active = 0, bypass = 0, bypass_lookups = 0;
+    size_t bypass_cpus = 0;
     unsigned mode = 0;
     CPUState *cpu;
 
@@ -193,25 +197,57 @@ static void dump_lp_tlb(GString *buf)
         insert += qatomic_read(&cpu->neg.tlb.c.lp_tlb_insert_count);
         evict += qatomic_read(&cpu->neg.tlb.c.lp_tlb_evict_count);
         flush += qatomic_read(&cpu->neg.tlb.c.lp_tlb_flush_count);
+        sample += qatomic_read(
+            &cpu->neg.tlb.c.lp_tlb_adaptive.sample_window_count);
+        active += qatomic_read(
+            &cpu->neg.tlb.c.lp_tlb_adaptive.active_window_count);
+        bypass += qatomic_read(
+            &cpu->neg.tlb.c.lp_tlb_adaptive.bypass_window_count);
+        bypass_cpus += cpu->neg.tlb.c.lp_tlb_adaptive.phase ==
+                       CPU_TLB_ADAPTIVE_BYPASS;
+#ifdef QEMU_TLB_PROFILE
+        bypass_lookups += qatomic_read(
+            &cpu->neg.tlb.c.lp_tlb_adaptive.bypass_lookup_count);
+#endif
     }
     g_string_append_printf(buf,
         "Large-page cache mode=%s lookup=%zu match=%zu hit=%zu "
         "insert=%zu eviction=%zu flush=%zu\n",
         mode < ARRAY_SIZE(mode_name) ? mode_name[mode] : "invalid",
         lookup, match, hit, insert, evict, flush);
+    g_string_append_printf(buf,
+        "Large-page adaptive sample_windows=%zu active_windows=%zu "
+        "bypass_windows=%zu bypassed_lookups=%zu bypass_cpus=%zu\n",
+        sample, active, bypass, bypass_lookups, bypass_cpus);
 }
 
 static void dump_ptw_cache(GString *buf)
 {
-    static const char * const mode_name[] = { "off", "on", "probe" };
+    static const char * const mode_name[] = {
+        "off", "on", "probe", "adaptive",
+    };
     size_t lookup[5] = {}, match[5] = {}, hit[5] = {};
     size_t insert[5] = {}, evict[5] = {}, flush = 0;
+    size_t sample = 0, active = 0, bypass = 0, bypass_lookups = 0;
+    size_t bypass_cpus = 0;
     unsigned mode = 0, level;
     CPUState *cpu;
 
     CPU_FOREACH(cpu) {
         mode = MAX(mode, cpu->neg.tlb.c.ptw_cache_mode);
         flush += qatomic_read(&cpu->neg.tlb.c.ptw_cache_flush_count);
+        sample += qatomic_read(
+            &cpu->neg.tlb.c.ptw_cache_adaptive.sample_window_count);
+        active += qatomic_read(
+            &cpu->neg.tlb.c.ptw_cache_adaptive.active_window_count);
+        bypass += qatomic_read(
+            &cpu->neg.tlb.c.ptw_cache_adaptive.bypass_window_count);
+        bypass_cpus += cpu->neg.tlb.c.ptw_cache_adaptive.phase ==
+                       CPU_TLB_ADAPTIVE_BYPASS;
+#ifdef QEMU_TLB_PROFILE
+        bypass_lookups += qatomic_read(
+            &cpu->neg.tlb.c.ptw_cache_adaptive.bypass_lookup_count);
+#endif
         for (level = 2; level <= 4; level++) {
             lookup[level] += qatomic_read(
                 &cpu->neg.tlb.c.ptw_cache_lookup_count[level]);
@@ -227,6 +263,10 @@ static void dump_ptw_cache(GString *buf)
     }
     g_string_append_printf(buf, "PTW cache mode=%s flush=%zu\n",
         mode < ARRAY_SIZE(mode_name) ? mode_name[mode] : "invalid", flush);
+    g_string_append_printf(buf,
+        "PTW adaptive sample_windows=%zu active_windows=%zu "
+        "bypass_windows=%zu bypassed_lookups=%zu bypass_cpus=%zu\n",
+        sample, active, bypass, bypass_lookups, bypass_cpus);
     for (level = 2; level <= 4; level++) {
         g_string_append_printf(buf,
             "PTW cache level=%u lookup=%zu match=%zu hit=%zu "

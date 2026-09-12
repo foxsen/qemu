@@ -115,29 +115,47 @@ class ProvenanceTest(unittest.TestCase):
 
     def test_large_page_cache_counter_parser_and_delta(self):
         parsed = HELPERS.parse_tlb(
-            "Large-page cache mode=on lookup=20 match=15 hit=15 "
+            "Large-page cache mode=adaptive lookup=20 match=15 hit=15 "
             "insert=5 eviction=1 flush=2\n"
+            "Large-page adaptive sample_windows=3 active_windows=2 "
+            "bypass_windows=1 bypassed_lookups=7 bypass_cpus=1\n"
         )
-        self.assertEqual(parsed["large_page_cache"]["mode"], "on")
+        self.assertEqual(parsed["large_page_cache"]["mode"], "adaptive")
         self.assertEqual(parsed["large_page_cache"]["hit"], 15)
+        self.assertEqual(
+            parsed["large_page_cache"]["adaptive"]["bypass_windows"], 1
+        )
         delta = HELPERS.subtract(parsed, {
             "large_page_cache": {
-                "mode": "on", "lookup": 2, "match": 1, "hit": 1,
+                "mode": "adaptive", "lookup": 2, "match": 1, "hit": 1,
                 "insert": 1, "eviction": 0, "flush": 1,
+                "adaptive": {
+                    "sample_windows": 1, "active_windows": 1,
+                    "bypass_windows": 0, "bypassed_lookups": 2,
+                    "bypass_cpus": 0,
+                },
             },
         })
-        self.assertEqual(delta["large_page_cache"]["mode"], "on")
+        self.assertEqual(delta["large_page_cache"]["mode"], "adaptive")
         self.assertEqual(delta["large_page_cache"]["lookup"], 18)
+        self.assertEqual(
+            delta["large_page_cache"]["adaptive"]["bypass_cpus"], 1
+        )
 
     def test_ptw_cache_counter_parser(self):
         parsed = HELPERS.parse_tlb(
-            "PTW cache mode=on flush=4\n"
+            "PTW cache mode=adaptive flush=4\n"
+            "PTW adaptive sample_windows=4 active_windows=2 "
+            "bypass_windows=2 bypassed_lookups=9 bypass_cpus=0\n"
             "PTW cache level=2 lookup=20 match=15 hit=15 "
             "insert=5 eviction=1\n"
         )
-        self.assertEqual(parsed["ptw_cache"]["mode"], "on")
+        self.assertEqual(parsed["ptw_cache"]["mode"], "adaptive")
         self.assertEqual(parsed["ptw_cache"]["flush"], 4)
         self.assertEqual(parsed["ptw_cache"]["levels"]["2"]["hit"], 15)
+        self.assertEqual(
+            parsed["ptw_cache"]["adaptive"]["sample_windows"], 4
+        )
 
     def test_fixed_tlb_config_parser_validation_and_delta(self):
         parsed = HELPERS.parse_tlb(

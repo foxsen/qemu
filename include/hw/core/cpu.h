@@ -210,7 +210,89 @@ typedef enum CPUTLBExperimentalCacheMode {
     CPU_TLB_CACHE_OFF,
     CPU_TLB_CACHE_ON,
     CPU_TLB_CACHE_PROBE,
+    CPU_TLB_CACHE_ADAPTIVE,
 } CPUTLBExperimentalCacheMode;
+
+/*
+ * Adaptive caches start with a short observation window.  A useful window
+ * keeps the cache active for longer; an unproductive window bypasses it
+ * before sampling again.  The controller is consulted only on a SoftMMU
+ * miss path, never by generated-code TLB hits.
+ */
+#define CPU_TLB_ADAPTIVE_SAMPLE_LOOKUPS 2048
+#define CPU_TLB_ADAPTIVE_ACTIVE_LOOKUPS 16384
+#define CPU_TLB_ADAPTIVE_BYPASS_LOOKUPS 16384
+
+typedef enum CPUTLBCacheAdaptivePhase {
+    CPU_TLB_ADAPTIVE_SAMPLE,
+    CPU_TLB_ADAPTIVE_ACTIVE,
+    CPU_TLB_ADAPTIVE_BYPASS,
+} CPUTLBCacheAdaptivePhase;
+
+typedef struct CPUTLBCacheAdaptiveState {
+    uint32_t remaining;
+    uint32_t benefit;
+    uint8_t phase;
+    size_t sample_window_count;
+    size_t active_window_count;
+    size_t bypass_window_count;
+#ifdef QEMU_TLB_PROFILE
+    size_t bypass_lookup_count;
+#endif
+} CPUTLBCacheAdaptiveState;
+
+static inline void cpu_tlb_cache_adaptive_init(
+    CPUTLBCacheAdaptiveState *state)
+{
+    state->remaining = CPU_TLB_ADAPTIVE_SAMPLE_LOOKUPS;
+    state->phase = CPU_TLB_ADAPTIVE_SAMPLE;
+    state->sample_window_count = 1;
+}
+
+static inline bool cpu_tlb_cache_adaptive_begin(
+    CPUTLBCacheAdaptiveState *state)
+{
+    if (state->phase != CPU_TLB_ADAPTIVE_BYPASS) {
+        return true;
+    }
+#ifdef QEMU_TLB_PROFILE
+    qatomic_inc(&state->bypass_lookup_count);
+#endif
+    if (--state->remaining == 0) {
+        state->remaining = CPU_TLB_ADAPTIVE_SAMPLE_LOOKUPS;
+        state->benefit = 0;
+        state->phase = CPU_TLB_ADAPTIVE_SAMPLE;
+        qatomic_inc(&state->sample_window_count);
+    }
+    return false;
+}
+
+static inline void cpu_tlb_cache_adaptive_complete(
+    CPUTLBCacheAdaptiveState *state, unsigned benefit,
+    unsigned minimum_benefit_shift)
+{
+    uint32_t window;
+
+    g_assert(state->phase != CPU_TLB_ADAPTIVE_BYPASS);
+    state->benefit += benefit;
+    if (--state->remaining != 0) {
+        return;
+    }
+
+    window = state->phase == CPU_TLB_ADAPTIVE_SAMPLE ?
+        CPU_TLB_ADAPTIVE_SAMPLE_LOOKUPS :
+        CPU_TLB_ADAPTIVE_ACTIVE_LOOKUPS;
+    if (state->benefit >= (window >> minimum_benefit_shift)) {
+        state->remaining = CPU_TLB_ADAPTIVE_ACTIVE_LOOKUPS;
+        state->phase = CPU_TLB_ADAPTIVE_ACTIVE;
+        qatomic_inc(&state->active_window_count);
+    } else {
+        state->remaining = CPU_TLB_ADAPTIVE_BYPASS_LOOKUPS;
+        state->phase = CPU_TLB_ADAPTIVE_BYPASS;
+        qatomic_inc(&state->bypass_window_count);
+    }
+    state->benefit = 0;
+}
 
 /*
  * The full TLB entry, which is not accessed by generated TCG code,
@@ -351,6 +433,7 @@ typedef struct CPUTLBCommon {
     size_t lp_tlb_insert_count;
     size_t lp_tlb_evict_count;
     size_t lp_tlb_flush_count;
+    CPUTLBCacheAdaptiveState lp_tlb_adaptive;
 
     /* Experimental x86 L2--L4 non-leaf page-table cache. */
     uint8_t ptw_cache_mode;
@@ -361,6 +444,7 @@ typedef struct CPUTLBCommon {
     size_t ptw_cache_insert_count[5];
     size_t ptw_cache_evict_count[5];
     size_t ptw_cache_flush_count;
+    CPUTLBCacheAdaptiveState ptw_cache_adaptive;
 
 #ifdef QEMU_TLB_PROFILE
     /*

@@ -15,6 +15,9 @@ VARIANTS = {
     "lp": ("on", "off"),
     "ptw": ("off", "on"),
     "both": ("on", "on"),
+    "lp-adaptive": ("adaptive", "off"),
+    "ptw-adaptive": ("off", "adaptive"),
+    "both-adaptive": ("adaptive", "adaptive"),
 }
 
 

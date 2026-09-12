@@ -170,7 +170,7 @@ def result_problems(summary, raw, result_dir, require_provenance=False,
                     )
         ptw_cache = summary.get("ptw_cache", {})
         mode = ptw_cache.get("mode")
-        if mode not in {None, "off", "on", "probe"}:
+        if mode not in {None, "off", "on", "probe", "adaptive"}:
             problems.append(f"invalid PTW cache mode: {mode}")
         flushes = ptw_cache.get("flush", 0)
         if not isinstance(flushes, int) or flushes < 0:
